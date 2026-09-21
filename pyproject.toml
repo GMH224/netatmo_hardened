@@ -1,0 +1,31 @@
+[project]
+name = "netatmo-hardened"
+version = "0.1.0"
+description = "Reliability-hardened fork of the Home Assistant Netatmo integration"
+requires-python = ">=3.14.2"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+# asyncio_mode is set in tests/integration/pytest.ini so that tier 1 can run
+# without pytest-asyncio installed.
+markers = [
+    "tier1: pure-logic tests, no Home Assistant runtime required",
+    "tier2: integration tests, require Home Assistant",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "B", "S", "ASYNC", "RUF", "UP", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Assertions are the point of a test; the "secrets" are fixture literals.
+"tests/*" = ["S101", "S105", "S106"]
+# OAuth endpoint URLs, not credentials.
+"custom_components/netatmo_hardened/const.py" = ["S105"]
+# Entity description constants are class-level by Home Assistant convention.
+"custom_components/netatmo_hardened/*.py" = ["RUF012"]

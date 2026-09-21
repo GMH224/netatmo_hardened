@@ -1,0 +1,134 @@
+# Defect Register and Traceability Matrix
+
+**Release:** 0.1.0
+**Date:** 2026-09-22
+**Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
+
+Every defect accepted for 0.1.0 is listed here with its origin, the fix, and
+the test that holds the fix in place. A row with no test reference is a row
+where the fix is not yet verifiable, and is marked as such rather than being
+quietly omitted.
+
+**ID scheme**
+
+| Prefix | Meaning |
+| --- | --- |
+| `P0-n` | Packaging / release-integrity defect. Found by the independent audit only. |
+| `C-n` | Code defect. |
+| `D-n` | Home Assistant deprecation to migrate. See `COMPATIBILITY.md`. |
+| `NET-n` / `SEC-n` | Identifiers from the supplied external audit, for cross-reference. |
+
+---
+
+## 1. Packaging and release integrity
+
+| ID | Defect | Severity | Fix | Verified by |
+| --- | --- | --- | --- | --- |
+| P0-1 | `hacs.json` declared a minimum of HA 2024.1.0; the code requires HA ≥ 2026.3 (Python ≥ 3.14 lazy annotations). Installing on any older HA raised `NameError` at import. | Critical | Floor set to `2026.9.0`. `from __future__ import annotations` added to **every** module so the forward-reference class of failure cannot recur silently. | `ruff check` (F821 clean); CI job `import-floor`; CI `tier2` matrix pinned to the declared floor |
+| P0-2 | No `translations/` directory. `strings.json` is a Core build-time file and is not read at runtime by custom integrations, so the config flow rendered raw keys. | High | `translations/en.json` generated from `strings.json` and shipped. | CI `hassfest` + `hacs` validation |
+| P0-3 | `quality_scale.yaml` asserted `config-flow-test-coverage: done` and `test-before-setup: done` with zero tests present. `NOTICE.md` claimed "no other logic was changed" while `device.py`, `entity.py`, `coordinator.py` and `services.py` all carried undocumented changes. | High | Attestations corrected to `partial` with named evidence. `NOTICE.md` rewritten to describe the actual change set. | Manual review; `docs/VERIFICATION_REPORT.md` |
+| P0-4 | `manifest.json` version `2026.9.21`, no repository tag. | Medium | Version set to `0.1.0`; release tagged `v0.1.0`. | `manifest.json` |
+
+---
+
+## 2. Code defects
+
+Ordered by operational consequence, not by discovery order.
+
+| ID | External ref | Location (pre-fix) | Defect | Severity | Fix | Verified by |
+| --- | --- | --- | --- | --- | --- | --- |
+| C-1 | NET-003 | `climate.py:534` | `timedelta.seconds` discards whole days, silently shortening every override ≥ 24 h. A 26 h command became 2 h. | High | `helper.end_timestamp_for_period()` using `total_seconds()`. | `tests/unit/test_control_integrity.py` (7 durations + regression pin) |
+| C-2 | NET-030 (impact missed) | `camera.py:289-303` | `process_events` mutated the pyatmo `Event.__dict__` in place and was not idempotent: the second poll discarded every subevent permanently. | High | `helper.build_event_index()` builds a detached copy. | `test_event_index_is_idempotent_across_polls`, `test_event_index_does_not_mutate_source_objects` |
+| C-3 | NET-012 | `sensor.py:945, 979-1017` | Public-weather reconfiguration updated area, signal, publishers and subscription but never `_station`, so the entity reported the **old geographic area** under the new name. | High | `_station` and map coordinates refreshed; `None` station fails closed to unavailable. | `tests/integration/` (public weather); manual review |
+| C-4 | NET-007 (understated) | `webhook.py:170-173`, `__init__.py:117-120` | Cleanup caught only `pyatmo.ApiError`. A timeout aborted unload → aborted every reload → disabled the watchdog's own recovery, for exactly the network fault that triggers it. | High | `RECOVERABLE_ERRORS` tuple covering transport failures; cleanup is best-effort. | `test_unload_survives_a_failing_dropwebhook` (3 error types), `test_reload_succeeds_while_the_backend_is_unreachable` |
+| C-5 | NET-004 | `device_trigger.py:161-164` | Subtype branch replaced the whole event filter, dropping event-type and device-id constraints (over-trigger) while matching `data.mode`, which the payload does not carry (under-trigger). | High | Subtype added as an additional constraint at the real payload path `data.home.therm_mode`. | `test_subtype_filter_keeps_device_and_type_constraints`, `test_thermostat_subtype_trigger_matches_real_payload` |
+| C-6 | NET-005 | `webhook.py:191` vs `:217` | Cloudhook creation sat outside the retry envelope — the exact failure class the fork exists to fix. | Med-High | Entire registration transaction wrapped; `RECOVERABLE_ERRORS` includes `CloudNotAvailable`. | `test_cloudhook_failure_is_inside_the_retry_envelope` |
+| C-7 | NET-009 | `coordinator.py:345-350` | All `ApiError` flattened together. No 401 → reauth path; a revoked token looked like an outage and drove an endless reload loop. | Med-High | `_is_auth_failure()` on `ApiError.status`, excluding throttling; `async_start_reauth()` once per handler. | `test_auth_failures_are_classified` (6 cases), `test_revoked_token_starts_reauth_not_a_reload_loop`, `test_reauth_is_started_only_once` |
+| C-8 | SEC-002…005 | `webhook.py:84, 101-106, 134` | No ingress validation. Non-object root → `AttributeError`; malformed `persons` → `AttributeError`; missing id fields → `KeyError`. Missing `event_type` defaulted to the string `"None"`, colliding with the coordinator's own activation signal. | Med-High | New `event_validation.py` module; single normalising boundary. | `tests/unit/test_event_validation.py` (17-payload adversarial corpus + targeted cases) |
+| C-9 | NET-011 / SEC-006 | `climate.py`, `select.py`, `light.py`, `camera.py`, `coordinator.py` | Entity handlers re-indexed raw webhook dictionaries directly. | Medium | All handlers use `.get()` with type guards; dispatcher callbacks cannot raise. | Same as C-8; `tests/integration/` |
+| C-10 | *(missed by external audit)* | `coordinator.py:259-274` | `async_update` iterated the live deque across an `await`; a concurrent entity add/remove raises `RuntimeError: deque mutated during iteration`. | Medium | Iterate a snapshot; skip publishers unsubscribed mid-cycle. | `test_update_survives_subscription_change_mid_cycle` |
+| C-11 | SEC-001, SEC-012 | `webhook.py:219, 70, 121` | Full webhook URL (a bearer secret) and complete payloads written to debug log. | Medium | URL never logged; `redacted_summary()` logs shape only. | `test_summary_never_contains_identifier_values`, `test_webhook_url_is_never_logged` |
+| C-12 | NET-006 | `webhook.py:241, 243` | Stop listeners and retry cancel handles accumulated without bound via `async_on_unload`. | Medium | One stop listener and at most one pending retry per entry, tracked on the data handler. | `test_stop_listener_is_installed_only_once`, `test_pending_retry_is_cancelled_on_unload` |
+| C-13 | *(missed by external audit)* | `coordinator.py:286-314` | Watchdog reload counter lived on the object the reload rebuilds → unbounded reload loop, no escalation, no repair issue. | Medium | Counter in `hass.data`; capped at `MAX_WATCHDOG_RELOADS`; raises a repair issue on exhaustion. | `test_watchdog_stops_after_max_reloads`, `test_watchdog_counter_survives_reload` |
+| C-14 | NET-002 (mechanism wrong) | `climate.py:436-441` | Cooling homes reported as preset `schedule` with **no target temperature**. The crash was already fixed upstream of this fork; the substitute was wrong data presented as healthy. | Medium | Reads pyatmo 9.9.0's unified `setpoint_mode` / `setpoint_temperature`; unmapped modes warn once instead of raising. | `tests/integration/` climate matrix |
+| C-15 | NET-008 / SEC-010 | `__init__.py:63` | Scope check used set intersection, accepting a partially authorized token silently. | Medium | **Deliberately not** the subset test the external audit recommended — see §4. Repair issue naming the missing scopes; fatal only when no usable scope is granted. | `test_partial_scopes_raise_a_repair_issue_but_still_set_up`, `test_token_with_no_usable_scope_is_fatal` |
+| C-16 | NET-015 | `select.py:65,119`, `entity.py:132,169,220`, `device.py:185` | `assert` used to validate live API and registry state. | Medium | Assertions removed; degrade or raise `HomeAssistantError` with an actionable message. | `ruff check --select S101` clean on `custom_components/` |
+| C-17 | NET-016 | `entity.py:118,133` | `DEVICE_DESCRIPTION_MAP[...]` indexed directly while `device.py` used `.get()` on the same map. | Medium | `.get()` with a generic fallback everywhere. | Manual review; CI lint |
+| C-18 | *(missed by external audit)* | `webhook.py:46-49, 89` | `SUBEVENT_TYPE_MAP` mapped both keys to `""`, so `data.get("", [])` was always empty — outdoor-camera `human`/`animal`/`vehicle` device triggers could **never fire**. | Med-Low | `SUBEVENT_COLLECTION` maps `outdoor` → `subevents`; sub-events inherit parent identifiers. **Behaviour change — see CHANGELOG.** | `tests/unit/test_event_validation.py` (subevent corpus) |
+| C-19 | NET-013 | `camera.py:302` | Events keyed on `event_time`; two events in the same second overwrote each other. | Low | Keyed on the event's own id. | `test_events_sharing_a_timestamp_are_both_kept` |
+| C-20 | NET-014 / SEC-008 | `media_source.py:64, 179` | `int(event_id)` raised `ValueError`; chained lookup raised `KeyError`; neither mapped to `Unresolvable`. | Low | String ids end to end; every layer validated; all failures become `Unresolvable`. | `tests/integration/` media source |
+| C-21 | SEC-009 | `config_flow.py:213` | `str(coord).split(".")[1]` raised `IndexError` for any coordinate below 1e-4 (near equator / prime meridian). | Low | `helper.normalise_coordinate()` — numeric, no string parsing. | `test_coordinate_normalisation_never_raises` (10 coords), `test_coordinate_precision_rule_matches_upstream_intent` |
+
+---
+
+## 3. Deprecations migrated
+
+Full analysis in `COMPATIBILITY.md`.
+
+| ID | Deprecation | Deadline | Status |
+| --- | --- | --- | --- |
+| D-1 | Config entry update listener combined with a reloading method in the config flow | **Error from 2026.12** | Fixed — reload decision moved to `async_config_entry_updated` |
+| D-2 | `DeviceInfo["via_device"]`, `async_get_or_create(via_device=...)` | 2027.8 | Already compliant (`via_device_id`) |
+| D-3 | `default_manufacturer` / `default_model` / `default_name` | 2027.9 | Not used |
+| D-4 | `DeviceEntry.config_entries` | 2027.10 (custom) | Not used |
+| D-5 | `merge_connections` / `merge_identifiers` | 2027.9 | Not used |
+| D-6 | `DeviceRegistry.devices` mapping access, `deleted_devices` | 2027.9 | Not used |
+| D-7 | OAuth2 helper raises config entry exceptions directly | 2026.10 | Adopted — no manual translation |
+| D-8 | voluptuous → probatio | 2026.9 | Already on `probatio` |
+| D-9 | New unit enumerators (`UnitOfRatio`, …) | 2026.6 | Already compliant |
+
+---
+
+## 4. Rejected recommendations
+
+Two recommendations from the external audit were **deliberately not implemented**.
+Both are recorded here because in an ICS context a rejected finding must be as
+traceable as an accepted one.
+
+### 4.1 NET-008 / SEC-010 — strict OAuth scope subset validation
+
+**Recommended:** replace the intersection test with `required_scopes <= actual_scopes`.
+
+**Rejected.** Netatmo issues scopes per product family — weather station,
+thermostat, camera, shutter — and this integration supports all of them
+independently. A user who owns only a weather station legitimately holds none
+of the camera scopes. A strict subset test would put every such account into a
+permanent reauthentication loop, converting a diagnostics gap into a total
+outage. The integration's own `API_SCOPES_EXCLUDED_FROM_CLOUD` list exists for
+this reason.
+
+**Implemented instead (C-15):** fail closed only when *no* usable scope is
+granted; otherwise raise a repair issue naming exactly which scopes are
+missing. This delivers the visibility the finding was actually asking for
+without the outage.
+
+### 4.2 NET-001 — disabled device IDs passed as `disabled_homes_ids`
+
+**Recommended:** stop passing device IDs to pyatmo's home denylist; treated as
+the report's top Critical finding.
+
+**Rejected as stated.** Verified against the pyatmo 9.9.0 source
+(`account.py`): `disabled_homes_ids` is compared only against `home_id`,
+`all_home_names` remains populated for denylisted homes, and Netatmo home IDs
+(24-char hex) and module IDs (MAC addresses) are disjoint namespaces. The
+behaviour is also deliberate in this fork — `device.py::async_sync_home_disabled_state`
+mirrors a home's disabled state onto its descendants and
+`coordinator._handle_home_device_update` reloads on toggle.
+
+**Residual finding accepted and fixed:** upstream issue
+[home-assistant/core#181448](https://github.com/home-assistant/core/issues/181448)
+complains that the behaviour is *silent*, not that it is wrong. A log line
+naming how many devices are excluded was added to
+`async_disabled_netatmo_ids()`. Severity: Low, not Critical.
+
+---
+
+## 5. External findings not carried forward
+
+| External ID | Disposition | Reason |
+| --- | --- | --- |
+| NET-028 | Not a defect | No divergence exists. `NetatmoCamera` inherits `NetatmoBaseEntity.available`, which ANDs publisher health. No line reference was given. |
+| NET-029 | Already handled | `webhook.py` already checked `entry.state is not ConfigEntryState.LOADED` and registered the cancel via `async_on_unload`. The real residual was accumulation (C-12), not a race. |
+| NET-031, NET-032, NET-033 | Not defects | Generic test-plan prose with no code citation or demonstrated fault; Appendix D concedes this. Folded into `TEST_PLAN.md` as test objectives. |
+| SEC-007 | Not a defect | Correctly self-labelled a hardening gap. aiohttp/HA already bound request bodies. Collection caps added anyway as defence in depth (`MAX_COLLECTION_ITEMS`). |
+| SEC-011 | Dismissed | `async_ensure_token_valid()` raises before a malformed token reaches `token["access_token"]`. |
