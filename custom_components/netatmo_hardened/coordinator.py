@@ -70,6 +70,7 @@ from .device import (
     async_sync_home_disabled_state,
     netatmo_module_parents,
 )
+from .helper import effective_poll_interval, home_is_pollable
 from .telemetry import (
     ERROR_AUTH,
     ERROR_NO_DEVICE,
@@ -114,6 +115,44 @@ DEFAULT_INTERVALS = {
     EVENT: 600,
 }
 SCAN_INTERVAL = 60
+
+# [hardened-fork] Minimum poll intervals, in seconds (defect F-004).
+#
+# `DEFAULT_INTERVALS` divided by `_interval_factor` is a *rate-limit*
+# calculation: an app with its own credentials may make 400 calls an hour
+# instead of 150, so upstream divides every interval by seven. Nothing in that
+# arithmetic asks how often the data changes.
+#
+# These floors do ask. Each is justified by the behaviour of the source, and
+# `effective_poll_interval()` takes the larger of the two - so a *lower* rate
+# limit can still lengthen an interval, but the rate limit can never shorten
+# one below the point where there is nothing new to fetch.
+MIN_INTERVALS = {
+    # Topology - homes, rooms, modules - changes when a human adds or moves
+    # hardware. Upstream polled it every 25 minutes on dev credentials.
+    ACCOUNT: 3600,
+    # Home status is event-driven, so it has no natural period; this floor is
+    # budget-derived rather than source-derived. Immediacy for things the
+    # operator actually did is provided by two other mechanisms:
+    # `async_force_update()` after every command, and push events when the
+    # operator has a public HTTPS endpoint and has enabled them (F-001).
+    HOME: 120,
+    # Every module of a Netatmo weather station - indoor and outdoor alike -
+    # publishes to the cloud once every five minutes. The floor sits below
+    # that period rather than on it: polling at exactly 300 s would drift into
+    # and out of phase with the station and periodically skip a measurement,
+    # while 240 s guarantees every published sample is observed at least once.
+    WEATHER: 240,
+    # Healthy Home Coach shares the weather sensors' cadence.
+    AIR_CARE: 240,
+    # Third-party public stations are not better than ten minutes, and this
+    # data feeds a map rather than a control decision.
+    PUBLIC: 600,
+    # Camera events arrive by push when push is enabled; polling is the
+    # fallback, not the primary path.
+    EVENT: 300,
+}
+
 UNAVAILABLE_AFTER_ERRORS = 3
 # [hardened-fork] Upstream used a 3600s (1 hour) ceiling here. A brief outage
 # (a firewall reload, a router hiccup, a DNS blip) could trip
@@ -662,7 +701,11 @@ class NetatmoDataHandler:
         if publisher == "public":
             kwargs = {"area_id": self.account.register_public_weather_area(**kwargs)}
 
-        interval = int(DEFAULT_INTERVALS[publisher] / self._interval_factor)
+        interval = effective_poll_interval(
+            DEFAULT_INTERVALS[publisher],
+            self._interval_factor,
+            MIN_INTERVALS[publisher],
+        )
         self.publisher[signal_name] = NetatmoPublisher(
             name=signal_name,
             interval=interval,
@@ -707,8 +750,28 @@ class NetatmoDataHandler:
 
         self.setup_air_care()
 
+        disabled_ids = set(async_disabled_netatmo_ids(self.hass, self.config_entry))
+        skipped: list[str] = []
+
         for home in self.account.homes.values():
             signal_home = f"{HOME}-{home.entity_id}"
+
+            # [hardened-fork] Do not poll a home that can produce nothing
+            # (defect F-003).
+            #
+            # `async_update_status` fetches an entire home; there is no
+            # per-room call. So disabling individual rooms cannot save any
+            # traffic - but a home with no modules at all, or one whose every
+            # module and room the operator has disabled, is a status request
+            # issued every couple of minutes for ever that can never yield an
+            # entity.
+            #
+            # A Netatmo account routinely carries such homes: one created by
+            # the app for a holiday address, one set up and never equipped.
+            # Each cost a poll on the same schedule as a real one.
+            if not home_is_pollable(home.modules or (), home.rooms or (), disabled_ids):
+                skipped.append(home.entity_id)
+                continue
 
             await self.subscribe(HOME, signal_home, None, home_id=home.entity_id)
             await self.subscribe(EVENT, signal_home, None, home_id=home.entity_id)
@@ -720,6 +783,17 @@ class NetatmoDataHandler:
             self.persons[home.entity_id] = {
                 person.entity_id: person.pseudo for person in home.persons.values()
             }
+
+        if skipped:
+            # Said out loud, for the same reason the disabled-device count is
+            # (external finding NET-001): the upstream complaint about this
+            # class of behaviour was never that it happened, only that it
+            # happened in silence.
+            _LOGGER.info(
+                "Not polling %s Netatmo home(s) with no enabled modules or "
+                "rooms; they would contribute no entities",
+                len(skipped),
+            )
 
         await self.unsubscribe(WEATHER, None)
         await self.unsubscribe(AIR_CARE, None)

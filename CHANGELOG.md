@@ -4,6 +4,85 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-09-22
+
+Cuts API traffic on the reference account from **210 calls an hour to 46**.
+No data is lost — the integration was polling far faster than the hardware
+produces measurements.
+
+Full analysis: [`docs/AUDIT_0.1.4.md`](docs/AUDIT_0.1.4.md).
+Release record: [`docs/RELEASE_0.1.4.md`](docs/RELEASE_0.1.4.md).
+
+### Fixed
+
+- **Polling was derived from the rate limit, not from how often the data
+  changes** (F-004). Every Netatmo weather station module publishes to the
+  cloud once every five minutes, indoor and outdoor alike. The integration
+  polled it every 85 seconds — about 18 API calls per actual measurement once
+  the homes were counted.
+
+  The cause: upstream divides each interval by seven because an application
+  with its own credentials may make 400 calls an hour instead of 150. Nothing
+  in that calculation asks how often the data changes. Every one of those
+  constants is inherited verbatim from `home-assistant/core`, verified by
+  diff, and three prior audits of this fork went past them.
+
+  There is now a floor per publisher, drawn from the source's own behaviour:
+
+  | Publisher | Was | Now |
+  | --- | ---: | ---: |
+  | Weather / air quality | 85 s | 240 s |
+  | Home status | 42 s | 120 s |
+  | Camera events | 85 s | 300 s |
+  | Public weather | 85 s | 600 s |
+  | Topology | ~26 min | 60 min |
+
+  The floor is a minimum, not a replacement — Home Assistant Cloud's smaller
+  budget can still produce a *longer* interval, and does. Weather sits at
+  240 s rather than 300 s deliberately: polling at exactly the publish period
+  drifts in and out of phase and periodically skips a measurement, while
+  staying strictly below it cannot.
+
+  **What you will notice:** sensor values update every 4 minutes instead of
+  every 2. No measurement is lost — the station only makes one every 5
+  minutes. A change made in the *Netatmo app* on an installation without push
+  events now takes up to 2 minutes to appear instead of 1.
+
+- **Homes that can never produce an entity were polled for ever** (F-003). A
+  Netatmo account routinely carries homes the app created for an address that
+  was never equipped — rooms, but no hardware. Two of the reference account's
+  three homes are like this, and each was polled every 60 seconds
+  indefinitely: two thirds of all home-status traffic fetched nothing.
+
+  The same now applies when **you have disabled everything inside a home**.
+  Disabling a device stops its entities updating but did not stop the API
+  call, because the request fetches the whole home. Disabling a home already
+  worked; this extends it to the same intent expressed a different way.
+
+  **What this cannot do:** there is no per-room API call. Disabling one room
+  of three saves no traffic, and a home with any enabled content is still
+  polled in full. Said here because it would otherwise look like a bug.
+
+### Known and deferred
+
+- The rate-limit brake **freezes** polling rather than slowing it: once the
+  hourly budget is exceeded it pushes every publisher's next scan back by 60 s
+  on each 60 s tick, so the schedule advances as fast as wall time until the
+  counter resets up to an hour later. This release puts the reference account
+  far out of its reach (46 of 400) but does not fix it. Changing a backoff
+  rule without live evidence is what produced E-010.
+- `HOME` and `EVENT` share a signal name, so the event publisher is never
+  created and camera events are never polled. Upstream behaviour; fixing it
+  would *add* traffic in the release that exists to reduce it, and it needs
+  camera hardware to verify.
+
+### Testing
+
+- 25 new tier-1 tests and 10 new tier-2 tests (244 tier-1 total, up from 219).
+- Tier 2 remains **unexecuted** here. Both fixes are pure functions and fully
+  covered by tier 1; what is unrun is every test that checks the coordinator
+  actually *calls* them.
+
 ## [0.1.3] - 2026-09-22
 
 Adds the API telemetry the operator asked for. Additive only — no existing
@@ -426,6 +505,7 @@ documented with reasoning in `docs/DEFECT_REGISTER.md` §4:
 - pyatmo held at 9.9.0; 9.9.1 exists and is a 0.2.0 task.
 - pyatmo 9.9.0's own webhook parser is not yet adopted; planned for 0.2.0.
 
+[0.1.4]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.4
 [0.1.3]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.3
 [0.1.2]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.2
 [0.1.1]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.1

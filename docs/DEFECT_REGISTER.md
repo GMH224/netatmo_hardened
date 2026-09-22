@@ -1,6 +1,6 @@
 # Defect Register and Traceability Matrix
 
-**Release:** 0.1.3 (cumulative — covers 0.1.0 through 0.1.3)
+**Release:** 0.1.4 (cumulative — covers 0.1.0 through 0.1.4)
 **Date:** 2026-09-22
 **Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
 
@@ -128,6 +128,36 @@ failure, 0.1.1 corrected that by never giving up, and neither distinguished
 | ID | Change | Rationale | Operator impact | Verified by |
 | --- | --- | --- | --- | --- |
 | F-002 | Six diagnostic sensors on a new **Netatmo API** service device: failure ratio (1h), last error, last error type, last error time, last success, poll latency. | The integration knew *whether* it was healthy — every entity's availability depends on it — but not *how* healthy or *when it last was not*. A gap in a history graph looked the same whether caused by a Netatmo outage, a local network fault or a rate limit. The ICS argument: the distinction between "this reading is stale" and "this reading is wrong" is not visible from the reading. | Additive only. Six new diagnostic entities, enabled by default; no existing entity, option or control path changes. Failure ratio reads *unknown* until the first poll. | 60 tier-1 tests in `test_telemetry.py`; 13 tier-2 tests in `test_telemetry_sensors.py` |
+
+### F-003 / F-004 — poll scheduling (0.1.4)
+
+| ID | Change | Rationale | Operator impact | Verified by |
+| --- | --- | --- | --- | --- |
+| F-004 | `helper.effective_poll_interval()` applies a per-publisher floor drawn from how often the source actually changes, taking `max()` with the rate-limit figure. | Upstream derives every interval from the **call budget** — 400/hour on own credentials, so divide by seven — and never from the data rate. A weather station whose modules publish every 300 s, indoor and outdoor alike, was polled every 85 s: ~18 API calls per measurement once homes are counted. Oversampling also spends a shared budget whose brake *freezes* polling rather than slowing it (audit §2.3), so redundant reads of one publisher starve every other. | Sensors refresh every 4 min instead of 2. **No measurement is lost** — the station produces one every 5 min either way. A change made in the Netatmo app on an installation without push takes up to 2 min instead of 1. | 12 tier-1 tests in `test_poll_scheduling.py`; 4 tier-2 tests |
+| F-003 | A home with no modules, or whose every module and room is disabled, gets no status publisher. Count logged. | Two situations produce a home polled for ever that can never yield an entity: one the Netatmo app created for an address never equipped (two of the reference account's three homes), and one whose contents the operator has disabled. Disabling a device stops its entities updating but not the API call, because `async_update_status` fetches the whole home. | 210 → 46 calls/hour on the reference account. No entity change for any home with enabled content. | 13 tier-1 tests in `test_poll_scheduling.py`; 6 tier-2 tests |
+
+### Note on F-003 and what it cannot do
+
+There is **no per-room fetch**. `async_update_status` returns an entire home
+or nothing, so disabling one room of three saves no traffic whatsoever. A home
+with any enabled content stays polled in full. This is asserted by
+`test_disabling_some_rooms_does_not_drop_the_home` rather than left implicit,
+because a later "optimisation" that dropped such a home would silently remove
+working entities.
+
+Disabling the *home itself* already worked before 0.1.4 — that id reaches
+pyatmo's `disabled_homes_ids` denylist. F-003 extends the same outcome to an
+operator who expressed the same intent by disabling everything inside it.
+
+### Note on F-004 and the one floor without evidence
+
+Five of the six floors are justified by a property of the source. `HOME` is
+not: home status is event-driven and has no publish period, so its 120 s floor
+is derived from the call budget and a judgement about responsiveness. It is
+the value in this release most likely to be wrong, and it is marked as such
+rather than presented alongside the measured ones. `async_force_update()`
+after every command and push events (F-001) are what make it safe; neither
+makes it correct.
 
 ### Note on F-002 and availability
 

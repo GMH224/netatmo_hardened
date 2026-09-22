@@ -15,7 +15,7 @@ fallback**: if this fork ever breaks on an upgrade, disable it and the built-in
 integration takes over. A fork that shadows the core domain masks it, so a
 breakage takes Netatmo out entirely.
 
-**Version 0.1.3** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
+**Version 0.1.4** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
 
 ---
 
@@ -46,6 +46,28 @@ fixed were not:
 All of the above are fixed. See [`CHANGELOG.md`](CHANGELOG.md) for the complete
 list and [`docs/DEFECT_REGISTER.md`](docs/DEFECT_REGISTER.md) for each defect
 traced to its fix and test.
+
+### Polling matched to the data (0.1.4)
+
+Upstream derives every poll interval from the **rate limit** — an app with its
+own credentials may make 400 calls an hour, so divide by seven — and never from
+how often the data changes. A Netatmo weather station publishes once every five
+minutes, indoor and outdoor alike; it was being polled every 85 seconds.
+
+Each publisher now has a floor drawn from its source: weather and air quality
+at 240 s, home status at 120 s, topology at an hour. The floor is a minimum,
+not a replacement, so Home Assistant Cloud's smaller budget still produces
+longer intervals where it should.
+
+Homes that can never produce an entity are no longer polled at all — one the
+Netatmo app created for an address you never equipped, or one whose every
+module and room you have disabled. On the reference account that took API
+traffic from **210 calls an hour to 46**, with no loss of data: sensors update
+every 4 minutes instead of 2, and the station only produces a measurement
+every 5.
+
+There is no per-room API call, so disabling *some* rooms of a home saves no
+traffic — the request fetches the whole home either way.
 
 ### API telemetry (0.1.3)
 
@@ -159,6 +181,8 @@ automations:
 | Document | Contents |
 | --- | --- |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release and why |
+| [`docs/RELEASE_0.1.4.md`](docs/RELEASE_0.1.4.md) | Release record, 0.1.4 |
+| [`docs/AUDIT_0.1.4.md`](docs/AUDIT_0.1.4.md) | Poll-scheduling audit, 0.1.4 |
 | [`docs/RELEASE_0.1.3.md`](docs/RELEASE_0.1.3.md) | Release record, 0.1.3 |
 | [`docs/AUDIT_0.1.3.md`](docs/AUDIT_0.1.3.md) | Feature-addition review of 0.1.3 |
 | [`docs/RELEASE_0.1.2.md`](docs/RELEASE_0.1.2.md) | Release record, 0.1.2 — **read §5 before upgrading** |
@@ -218,6 +242,12 @@ Stated plainly rather than omitted:
 - 0.1.3's telemetry has **never been soaked**: the failure ratio has not been
   observed going non-zero and back on real hardware, and there is no latency
   baseline for a real deployment. Watch those sensors before believing them.
+- The rate-limit brake **freezes** polling rather than slowing it once the
+  hourly budget is exceeded. 0.1.4 puts a normal account far out of its reach
+  but does not fix it. See [`docs/AUDIT_0.1.4.md`](docs/AUDIT_0.1.4.md) §6.
+- `HOME` and `EVENT` share a signal name upstream, so the event publisher is
+  never created and camera events are not polled. Needs camera hardware to
+  verify before changing.
 - No automated diff against the upstream core integration; drift review is
   manual.
 - No brand icon: HA brand images are keyed by domain and the central brands

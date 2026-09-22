@@ -1,6 +1,6 @@
 # Verification Report
 
-**Release:** 0.1.3
+**Release:** 0.1.4
 **Date:** 2026-09-22
 **Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
 
@@ -20,8 +20,8 @@ archive at all; that is the failure mode this document exists to prevent.
 | Static syntax check, all modules | Pass | ✅ Yes |
 | `ruff check` (F, E, W, B, S, ASYNC, RUF, UP, I) | **All checks passed** | ✅ Yes |
 | `ruff format --check` | 39 files already formatted | ✅ Yes |
-| **Explicit compile of every `.py` file** | **39 files, 0 syntax errors** | ✅ Yes — **new gate, see §2.1a** |
-| Tier 1 test suite (pure logic) | **219 passed, 0 failed** | ✅ Yes |
+| **Explicit compile of every `.py` file** | **41 files, 0 syntax errors** | ✅ Yes — see §2.1a |
+| Tier 1 test suite (pure logic) | **244 passed, 0 failed** | ✅ Yes |
 | Tier 2 test suite (integration) | Authored, not executed here | ❌ **No — see §4** |
 | `hassfest` manifest validation | Configured in CI | ❌ Not executed here |
 | HACS validation | Configured in CI | ❌ Not executed here |
@@ -80,7 +80,7 @@ a syntax gate. Both now run, and the compile gate is a release blocker.
 
 ```
 $ python -m pytest tests/unit
-219 passed in 0.23s
+244 passed in 0.25s
 ```
 
 | File | Tests | Covers |
@@ -91,6 +91,7 @@ $ python -m pytest tests/unit
 | `test_push_event_policy.py` | 26 | **E-010**, **E-011**, **F-001** |
 | `test_release_integrity.py` | 9 | **P0-1**, **P0-2**, shipped-artefact gate |
 | `test_telemetry.py` | 60 | **F-002**, plus **C-11** and **E-009** re-applied to entity states |
+| `test_poll_scheduling.py` | 25 | **F-003**, **F-004** |
 
 These are executed on the authoring environment's Python 3.11 and in CI on
 3.11 / 3.12 / 3.13 / 3.14. That portability is deliberate: the arithmetic
@@ -237,7 +238,7 @@ P0-2 moves out of "review only": its remediation was incomplete until 0.1.2
 
 ## 6. Release recommendation
 
-**Fit for release as 0.1.3**, with the residual risk in §4 accepted and
+**Fit for release as 0.1.4**, with the residual risk in §4 accepted and
 recorded.
 
 **What changed for 0.1.3.** A compile gate was added after `ruff check` was

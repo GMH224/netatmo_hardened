@@ -10,7 +10,7 @@ logged it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
@@ -231,3 +231,93 @@ class NetatmoArea:
     mode: str
     show_on_map: bool
     uuid: UUID = field(default_factory=uuid4)
+
+
+# ---------------------------------------------------------------------------
+# Poll scheduling (0.1.4, features F-003 and F-004)
+# ---------------------------------------------------------------------------
+
+
+def effective_poll_interval(
+    base_interval: int, interval_factor: int, minimum_interval: int
+) -> int:
+    """Return how often a publisher should actually be polled, in seconds.
+
+    [hardened-fork] Defect F-004.
+
+    Upstream derives the interval from the **rate limit**: an application with
+    its own credentials gets 400 calls/hour instead of 150, so the base
+    interval is divided by seven. Nothing in that calculation refers to how
+    often the data changes.
+
+    The result is that a Netatmo weather station - every module of which
+    publishes to the cloud once every five minutes, indoor and outdoor alike -
+    was polled every 85 seconds, and a home with no modules in it at all was
+    polled every 42. Roughly eighteen calls for every actual measurement.
+
+    Oversampling is not merely wasteful. The rate-limit brake in
+    ``async_update`` pushes *every* publisher's next scan back by 60 s on each
+    tick that the hourly call count exceeds the limit - and the ticks are 60 s
+    apart, so once tripped it advances the schedule exactly as fast as wall
+    time and polling does not slow down, it stops. Spending the budget on
+    redundant reads of one publisher is what starves the others.
+
+    This applies a floor: the rate-limit arithmetic may lengthen an interval
+    but may never shorten it below the point where the source has nothing new
+    to give. ``max()`` rather than a replacement, because a *lower* rate limit
+    (Home Assistant Cloud) must still be honoured.
+    """
+    if interval_factor < 1:
+        # A factor below one would multiply rather than divide. Treat it as
+        # "no scaling" rather than raising, because this is called during
+        # setup and a scheduling helper must not be able to fail a load.
+        interval_factor = 1
+    scaled = int(base_interval / interval_factor)
+    return max(scaled, minimum_interval)
+
+
+def home_is_pollable(
+    module_ids: Iterable[str],
+    room_ids: Iterable[str],
+    disabled_ids: Container[str],
+) -> bool:
+    """Return whether a home has anything left worth fetching status for.
+
+    [hardened-fork] Defect F-003.
+
+    Two situations produce a home that is polled for ever and can never
+    contribute a single entity:
+
+    1. **A home with no modules.** A Netatmo account commonly carries homes
+       created by the app - a holiday address, a home set up and never
+       equipped - which hold rooms but no hardware. Upstream subscribed a
+       status publisher for each one regardless.
+    2. **A home whose every module and room the operator has disabled.**
+       Disabling a device in Home Assistant stops its entities updating, but
+       it does not stop the API call: ``async_update_status`` fetches the
+       whole home, so disabling the contents changed nothing about the
+       traffic. Only disabling the *home itself* did, because that id reaches
+       pyatmo's ``disabled_homes_ids`` denylist - and an operator who disables
+       every room in a home has expressed the same intent.
+
+    A home with no rooms **and** no modules is not pollable. A home with rooms
+    but no modules is not pollable either: a room reports nothing on its own,
+    its entities come from the modules assigned to it.
+
+    Note what this cannot do. A home where *some* rooms are disabled is still
+    polled, because the API has no per-room fetch - ``async_update_status``
+    returns the entire home or nothing. Disabling one room of three saves no
+    traffic, and this function does not pretend otherwise.
+    """
+    modules = [module_id for module_id in module_ids]
+    if not modules:
+        return False
+
+    if any(module_id not in disabled_ids for module_id in modules):
+        return True
+
+    # Every module is disabled. The home is still worth polling only if some
+    # room survives that the operator has not also disabled - a room can carry
+    # entities of its own (a thermostat setpoint lives on the room, not on the
+    # valve module).
+    return any(room_id not in disabled_ids for room_id in room_ids)

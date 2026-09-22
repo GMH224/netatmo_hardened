@@ -1,6 +1,6 @@
 # Test Plan
 
-**Release:** 0.1.3
+**Release:** 0.1.4
 **Baseline:** Home Assistant 2026.9 · Python 3.14.2 · pyatmo 9.9.0
 
 ## 1. Strategy
@@ -64,6 +64,13 @@ testable, not a cosmetic refactor.
 | **F-002** | **Telemetry sensors stay available while the API fails** | 2 | `test_telemetry_stays_available_while_the_api_fails`, `test_failure_ratio_reports_an_ongoing_outage` |
 | **F-002** | The classification survives the round trip through the real fetch path | 2 | `test_error_type_is_classified_from_the_real_exception` (4 cases), `test_transport_errors_are_classified_as_network` |
 | **F-002** | A recovered fault stays visible | 1 + 2 | `test_a_success_does_not_erase_the_last_error` + `test_last_error_survives_a_subsequent_success` |
+| **F-004** | A high call budget cannot poll faster than the source changes; a low one can still poll slower | 1 | `test_floor_applies_when_the_rate_limit_would_poll_faster`, `test_a_lower_rate_limit_may_still_lengthen_the_interval`, `test_floor_is_ignored_when_the_scaled_interval_is_already_longer` |
+| **F-004** | The weather floor stays strictly below the station's 300 s publish period | 1 | `test_weather_floor_is_below_the_station_publish_period`, `test_upstream_cadence_is_what_this_replaces` |
+| **F-004** | A nonsensical interval factor cannot produce a runaway poll rate | 1 | `test_a_nonsensical_factor_cannot_produce_a_runaway_poll_rate` (3 cases) |
+| **F-004** | The floor actually reaches the scheduler | 2 | `test_publisher_intervals_respect_the_floor`, `test_weather_is_not_polled_faster_than_the_station_publishes`, `test_total_call_rate_stays_clear_of_the_brake` |
+| **F-003** | A home with no modules, or with everything disabled, is not polled | 1 + 2 | `test_a_home_with_no_modules_is_not_polled`, `test_a_home_whose_every_module_and_room_is_disabled_is_not_polled` + `test_a_home_with_no_modules_gets_no_publisher`, `test_a_home_with_every_device_disabled_gets_no_publisher` |
+| **F-003** | A home with any enabled content is still polled in full | 1 + 2 | `test_one_enabled_module_keeps_the_home_polled`, `test_a_surviving_room_keeps_the_home_polled`, `test_disabling_some_rooms_does_not_drop_the_home` + `test_one_enabled_device_keeps_the_home_polled`, `test_an_equipped_home_is_still_polled` |
+| **F-003** | Skipping a home never fails the load | 2 | `test_skipping_empty_homes_does_not_break_setup` |
 | **Toolchain** | Every shipped `.py` file parses on a supported interpreter | Static | explicit compile gate over all files — `ruff check` alone was shown insufficient (`AUDIT_0.1.3.md` §5) |
 
 ## 3. Adversarial payload corpus
@@ -102,6 +109,10 @@ external audit's NET-031 through NET-033, which were reclassified from
 | Non-English translation files | Not covered — only `en.json` ships. A future locale must expand its own references (E-011) |
 | A failure ratio observed going non-zero and back on real hardware | **Not covered.** Every F-002 failure path is exercised by fixtures only; the operator's environment has been healthy throughout. An untested indicator reading "healthy" is the same hazard as no indicator |
 | A latency baseline for a real Netatmo poll | Not covered — no measurement exists, so there is no basis yet for a threshold an operator could alert on |
+| The observed rate of change of **home status** | **Not covered.** `MIN_INTERVALS[HOME]` is the one floor derived from judgement rather than measurement (F-004) |
+| The rate-limit brake's freeze behaviour | **Not covered — known defect, deferred.** Exceeding the hourly budget advances `next_scan` as fast as wall time, stopping polling for up to an hour rather than slowing it. See `AUDIT_0.1.4.md` §6 |
+| `EVENT` publisher scheduling | **Not covered — upstream quirk.** `HOME` and `EVENT` share a signal name, so `subscribe()` returns early and `async_update_events` is never scheduled. Needs camera hardware to verify. See `AUDIT_0.1.4.md` §5 |
+| Netatmo's station publish period, from the vendor | Taken from the operator and community sources; the dev portal did not render through the available tooling. The floor sits below the stated period, so a longer true period leaves the fix correct |
 | Live cooling-mode payloads from real hardware | Not covered — C-14 built on the pyatmo data model |
 
 ## 5. Entry and exit criteria

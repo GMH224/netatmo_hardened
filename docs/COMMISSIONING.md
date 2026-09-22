@@ -1,6 +1,6 @@
 # Commissioning and Soak Checklist
 
-**Applies to:** 0.1.3 · test or staging installation
+**Applies to:** 0.1.4 · test or staging installation
 **Purpose:** establish, by observation on a live system, the behaviour that
 neither static analysis nor the tier-1 test suite can establish.
 
@@ -159,6 +159,49 @@ abnormal.
 
 ---
 
+### 1.8 Poll scheduling took effect (0.1.4)
+
+0.1.4 cut the API call rate roughly 4.6× on the reference account. **This is
+the first release with an instrument already fitted for its own effect** — the
+0.1.3 telemetry sensors — so confirm the change rather than assuming it.
+
+**Traffic.** Wait an hour after start, then check **API last success** advances
+about every 4 minutes rather than every 2. If you have the recorder enabled,
+the state-change count on any weather sensor over an hour is the direct
+measure: expect roughly 15, not 30.
+
+**Homes that should no longer be polled.** With debug logging on:
+
+```bash
+grep "Not polling" home-assistant.log
+```
+
+Expect one line naming how many homes were skipped. On an account with homes
+the Netatmo app created but never equipped, that count should match the number
+of empty homes. **Zero when you expected more means F-003 did not engage** —
+report it with your diagnostics.
+
+**What must NOT have changed.** These are the regressions this release could
+plausibly have caused:
+
+| Check | Expected |
+| --- | --- |
+| Every sensor that had a value before the upgrade | still has one |
+| Entity count | unchanged — skipping applies only to homes with nothing enabled |
+| A home where you disabled *some* rooms | still fully polled; its other rooms still work |
+| A thermostat command from Home Assistant | still reflects within a minute (a command forces a refresh) |
+| A change made in the **Netatmo app** | now up to 2 minutes to appear, instead of 1, unless push events are on |
+
+That last row is the one genuine slowdown. If it matters to you, enable push
+events (§1.4a) — that is what they are for.
+
+**Latency baseline.** Record **API poll latency** again after this change. It
+measures one publisher call and consecutive readings come from *different*
+publishers as the queue rotates, so expect variance between samples that is
+the queue, not the network.
+
+---
+
 ## 2. First six hours — the reload check
 
 **This is the single most important observation in the list.**
@@ -282,11 +325,13 @@ Deploy to an unattended installation only when **all** of the following hold:
 - [ ] §2 clear after a minimum of six hours
 - [ ] §1.7 telemetry sensors read sensibly, and a healthy-state latency
       baseline has been recorded
+- [ ] §1.8 poll rate confirmed reduced, skipped-home count matches expectation,
+      and nothing in the "must NOT have changed" table regressed
 - [ ] §3 complete for every device class you actually own
 - [ ] §4 clear after seven days
 - [ ] Results recorded, with dates
 
-Until then 0.1.3 is a **test-environment release**, whatever its version number
+Until then 0.1.4 is a **test-environment release**, whatever its version number
 says.
 
 ---
