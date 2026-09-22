@@ -1,6 +1,6 @@
 # Verification Report
 
-**Release:** 0.1.1
+**Release:** 0.1.2
 **Date:** 2026-09-22
 **Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
 
@@ -19,12 +19,13 @@ archive at all; that is the failure mode this document exists to prevent.
 | --- | --- | --- |
 | Static syntax check, all modules | Pass | ✅ Yes |
 | `ruff check` (F, E, W, B, S, ASYNC, RUF, UP, I) | **All checks passed** | ✅ Yes |
-| `ruff format --check` | 31 files already formatted | ✅ Yes |
-| Tier 1 test suite (pure logic) | **124 passed, 0 failed** | ✅ Yes |
+| `ruff format --check` | 36 files already formatted | ✅ Yes |
+| Tier 1 test suite (pure logic) | **159 passed, 0 failed** | ✅ Yes |
 | Tier 2 test suite (integration) | Authored, not executed here | ❌ **No — see §4** |
 | `hassfest` manifest validation | Configured in CI | ❌ Not executed here |
 | HACS validation | Configured in CI | ❌ Not executed here |
-| Live Home Assistant deployment | Not performed | ❌ No |
+| Live Home Assistant deployment | **Soak performed on 0.1.1** — HA 2026.9.3, Python 3.14.6, HA OS 18.3. Found E-010. | ✅ Yes (0.1.1) |
+| Home Assistant translation-loading behaviour | `helpers/translation.py` @ `dev` read; no `[%key:…%]` expansion at load time | ✅ Yes |
 | pyatmo 9.9.0 source review | Performed for C-14, C-7, NET-001 | ✅ Yes |
 
 ---
@@ -38,7 +39,7 @@ $ ruff check custom_components tests
 All checks passed!
 
 $ ruff format --check custom_components tests
-31 files already formatted
+36 files already formatted
 ```
 
 Two results are worth calling out specifically:
@@ -56,14 +57,16 @@ Two results are worth calling out specifically:
 
 ```
 $ python -m pytest tests/unit
-124 passed in 0.09s
+159 passed in 0.12s
 ```
 
 | File | Tests | Covers |
 | --- | --- | --- |
-| `test_control_integrity.py` | 52 | C-1, C-2, C-19, C-21, **E-004**, **E-006** |
-| `test_event_validation.py` | 55 | C-8, C-9, C-11, C-18 |
-| `test_identity_protection.py` | 17 | **E-003**, **E-009** |
+| `test_control_integrity.py` | 41 | C-1, C-2, C-19, C-21, **E-004**, **E-006** |
+| `test_event_validation.py` | 56 | C-8, C-9, C-11, C-18 |
+| `test_identity_protection.py` | 27 | **E-003**, **E-009** |
+| `test_push_event_policy.py` | 26 | **E-010**, **E-011**, **F-001** |
+| `test_release_integrity.py` | 9 | **P0-1**, **P0-2**, shipped-artefact gate |
 
 These are executed on the authoring environment's Python 3.11 and in CI on
 3.11 / 3.12 / 3.13 / 3.14. That portability is deliberate: the arithmetic
@@ -151,7 +154,30 @@ independently.
 HA 2026.9.0 and 2026.9.3. Do not tag a subsequent release until that job has
 passed at least once.
 
-### 4.2 Live deployment
+### 4.2 Live deployment — partially executed for 0.1.2
+
+**This section is no longer wholly negative.** 0.1.1 was deployed to the
+operator's test environment on 2026-09-22 (HA 2026.9.3, Python 3.14.6, Home
+Assistant OS 18.3) following `COMMISSIONING.md`. What that established:
+
+| Verified live | Result |
+| --- | --- |
+| Custom-integration load on the declared baseline | Loaded; `overwrites_built_in: false` — the independent-domain cut-over holds |
+| Topology fetch and polling against a real Netatmo account | Working (`NAMain` + 2 × `NAModule4`, three homes) |
+| Diagnostics redaction | Tokens, `webhook_id`, `cloudhook_url`, home names and coordinates all `**REDACTED**`; `grep -ci "api/webhook/"` over the supplied log returned **0** |
+| Webhook registration without a public HTTPS endpoint | Rejected `400 WH006` — **found E-010** |
+
+What the soak did **not** establish, because the account and environment do not
+provide it:
+
+* push-event delivery (no public HTTPS endpoint — F-001's enabled branch);
+* camera, thermostat, presence or cooling behaviour (weather station only, so
+  the whole control-integrity class remains unexercised against hardware);
+* long-running listener/timer growth (the soak was hours, not days);
+* whether E-001's reload fix holds over many token refresh cycles — debug
+  logging was not enabled, so the reload count could not be read from the log.
+
+### 4.3 Remaining live gaps
 
 No live Netatmo account, no real hardware, and no running Home Assistant
 instance were used. The following therefore remain unverified end to end:
@@ -163,7 +189,7 @@ instance were used. The following therefore remain unverified end to end:
 * long-running listener/timer growth over days of reconnect cycles (C-12 is
   verified structurally and by an authored tier 2 test only).
 
-### 4.3 hassfest and HACS validation
+### 4.4 hassfest and HACS validation
 
 Both are configured in CI but require the GitHub Actions environment. Neither
 was run locally.
@@ -174,18 +200,31 @@ was run locally.
 
 | Verification strength | Defects |
 | --- | --- |
-| **Executed test** | C-1, C-2, C-8, C-9 (partial), C-11 (partial), C-18 (partial), C-19, C-21 |
+| **Executed test** | C-1, C-2, C-8, C-9 (partial), C-11 (partial), C-18 (partial), C-19, C-21, E-003, E-004 (tier 1 half), E-006, E-009, **E-010** (classification), **E-011**, **F-001** (default and keys) |
 | **Static analysis** | P0-1, C-16, C-17 |
-| **Authored test, awaiting first CI run** | C-3, C-4, C-5, C-6, C-7, C-10, C-12, C-13, C-14, C-15, C-20 |
-| **Review and documentation only** | P0-2, P0-3, P0-4, D-1 … D-9 |
+| **Observed live** | **E-010** (reproduced from the operator's log and diagnostics) |
+| **Authored test, awaiting first CI run** | C-3, C-4, C-5, C-6, C-7, C-10, C-12, C-13, C-14, C-15, C-20, E-001, E-002, E-005, E-007, E-008, **E-010** (lifecycle half), **F-001** (lifecycle half) |
+| **Review and documentation only** | P0-3, P0-4, D-1 … D-9 |
+
+P0-2 moves out of "review only": its remediation was incomplete until 0.1.2
+(see E-011) and is now covered by executed tests.
 
 ---
 
 ## 6. Release recommendation
 
-**Fit for release as 0.1.1**, with the residual risk in §4 accepted and
-recorded — and with the explicit qualification that the same residual risk
-produced the defects this release fixes.
+**Fit for release as 0.1.2**, with the residual risk in §4 accepted and
+recorded.
+
+**What changed for 0.1.2.** The live soak is no longer a gap for the load and
+polling path — it is executed evidence, and it is what found E-010. Tier 1
+grew from 124 to 159 tests and now covers the shipped translation artefact as
+well as the source it came from. What has not changed is §4.1: tier 2 remains
+unexecuted here, and F-001 is a load-time decision that only tier 2 reaches.
+
+**Carried from 0.1.1**, and still true: the same residual risk that produced
+E-001 and E-002 is the residual risk under which E-010's lifecycle half and
+F-001's gating are shipping now.
 
 The four release-blocking packaging defects are fixed and statically verified.
 The two highest-consequence control-integrity defects — C-1 (truncated
@@ -194,7 +233,10 @@ executed tests. The remaining fixes are reviewed, statically clean, and carry
 authored tests that will execute on the first CI run.
 
 **Condition on the next release:** 0.2.0 must not be tagged until the tier 2
-job has passed, and this report must be updated with its result.
+job has passed, and this report must be updated with its result. That condition
+was set for 0.1.2 and is **not met** — 0.1.2 ships with it outstanding, which is
+recorded here rather than quietly dropped. The condition stands, unchanged, and
+its cost is now two releases of accumulated unexecuted lifecycle tests.
 
 ---
 

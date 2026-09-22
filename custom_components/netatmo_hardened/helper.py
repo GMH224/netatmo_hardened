@@ -156,6 +156,45 @@ def normalise_coordinate(
     return candidate
 
 
+# HTTP statuses for which retrying a webhook registration cannot succeed.
+#
+# 400 / 404 are configuration faults - Netatmo answers 400 with code WH006,
+# "invalid webhook url", when the URL is not a publicly reachable HTTPS
+# endpoint. 401 / 403 are authorization faults, which a webhook retry cannot
+# mend either; the coordinator routes those to reauthentication separately.
+PERMANENT_WEBHOOK_FAILURE_STATUSES: frozenset[int] = frozenset({400, 401, 403, 404})
+
+
+def webhook_failure_is_permanent(
+    status: int | None, *, throttled: bool = False
+) -> bool:
+    """Return whether a webhook registration failure can ever succeed on retry.
+
+    [hardened-fork] Defect E-010, found during the 0.1.1 live soak.
+
+    Upstream's defect was giving up on *transient* failures - a single 429 left
+    the webhook unregistered until someone pressed Reload. 0.1.1 fixed that by
+    retrying indefinitely. That over-corrected: a deployment with no public
+    HTTPS endpoint gets ``400 - invalid webhook url (WH006)`` on every attempt,
+    for ever, which is permanent useless API traffic against a rate-limited
+    account plus a warning in the log every fifteen minutes.
+
+    Both directions are wrong for the same reason: the code did not distinguish
+    "this might work later" from "this cannot work until a human changes
+    something". A deterministic rejection needs a repair issue, not a retry.
+
+    ``throttled`` is passed separately because Netatmo answers 403 when rate
+    limiting, which pyatmo surfaces as ``ApiThrottlingError``. That is a
+    transient condition wearing a permanent-looking status, and classifying it
+    on status alone would stop retrying something that would have succeeded.
+    """
+    if throttled:
+        return False
+    if status is None:
+        return False
+    return status in PERMANENT_WEBHOOK_FAILURE_STATUSES
+
+
 def command_failed(result: Any) -> bool:
     """Return whether a pyatmo control call reported failure.
 

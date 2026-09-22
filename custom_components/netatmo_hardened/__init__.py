@@ -34,7 +34,14 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.typing import ConfigType
 
 from . import api
-from .const import DOMAIN, ISSUE_PARTIAL_SCOPES, PLATFORMS
+from .const import (
+    CONF_ENABLE_WEBHOOK,
+    DEFAULT_ENABLE_WEBHOOK,
+    DOMAIN,
+    ISSUE_PARTIAL_SCOPES,
+    ISSUE_WEBHOOK_REJECTED,
+    PLATFORMS,
+)
 from .coordinator import NetatmoConfigEntry, NetatmoDataHandler
 from .services import async_setup_services
 from .webhook import (
@@ -158,14 +165,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetatmoConfigEntry) -> b
             await unregister_webhook()
             entry.async_on_unload(async_call_later(hass, 30, register_webhook))
 
-    if cloud.async_active_subscription(hass):
-        if cloud.async_is_connected(hass):
-            await register_webhook()
-        entry.async_on_unload(
-            cloud.async_listen_connection_change(hass, manage_cloudhook)
-        )
+    # [hardened-fork] Push events are opt-in (0.1.2).
+    #
+    # Netatmo only registers a webhook against a publicly reachable HTTPS
+    # endpoint on port 443. An installation without one cannot use push at all
+    # and every attempt is refused deterministically, so the subsystem is not
+    # wired up unless the operator has stated that their deployment has such an
+    # endpoint. Polling is untouched either way; only push is lost.
+    if data_handler.webhook_expected:
+        if cloud.async_active_subscription(hass):
+            if cloud.async_is_connected(hass):
+                await register_webhook()
+            entry.async_on_unload(
+                cloud.async_listen_connection_change(hass, manage_cloudhook)
+            )
+        else:
+            entry.async_on_unload(async_at_started(hass, register_webhook))
     else:
-        entry.async_on_unload(async_at_started(hass, register_webhook))
+        _LOGGER.debug(
+            "Netatmo push events are disabled in the integration options; "
+            "data is polled only"
+        )
+        ir.async_delete_issue(
+            hass, DOMAIN, f"{ISSUE_WEBHOOK_REJECTED}_{entry.entry_id}"
+        )
 
     entry.async_on_unload(entry.add_update_listener(async_config_entry_updated))
 
@@ -230,7 +253,19 @@ async def async_config_entry_updated(
     if entry.options == data_handler.active_options:
         return
 
+    previous = data_handler.active_options
     data_handler.active_options = deepcopy(dict(entry.options))
+
+    # Enabling or disabling push events is a load-time decision - the webhook
+    # subsystem is wired during setup - so that one option needs a reload.
+    # This is a reload triggered by a genuine *options* change, which is not
+    # the E-001 defect: that was a reload on every routine token write.
+    if previous.get(CONF_ENABLE_WEBHOOK, DEFAULT_ENABLE_WEBHOOK) != entry.options.get(
+        CONF_ENABLE_WEBHOOK, DEFAULT_ENABLE_WEBHOOK
+    ):
+        _LOGGER.debug("Netatmo push-event setting changed; reloading")
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+        return
     _LOGGER.debug("Netatmo options changed; refreshing public weather entities")
     async_dispatcher_send(hass, f"signal-{DOMAIN}-public-update-{entry.entry_id}")
 

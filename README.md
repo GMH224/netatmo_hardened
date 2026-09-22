@@ -15,7 +15,7 @@ fallback**: if this fork ever breaks on an upgrade, disable it and the built-in
 integration takes over. A fork that shadows the core domain masks it, so a
 breakage takes Netatmo out entirely.
 
-**Version 0.1.1** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
+**Version 0.1.2** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
 
 ---
 
@@ -46,6 +46,25 @@ fixed were not:
 All of the above are fixed. See [`CHANGELOG.md`](CHANGELOG.md) for the complete
 list and [`docs/DEFECT_REGISTER.md`](docs/DEFECT_REGISTER.md) for each defect
 traced to its fix and test.
+
+### Push events are off by default (0.1.2)
+
+Netatmo pushes camera and thermostat events by calling a **webhook**, which it
+registers only against a publicly reachable HTTPS endpoint on port 443. Most
+Home Assistant installations do not have one, and for a deployment you care
+about that is usually the right choice.
+
+Such an installation cannot use push events at all — Netatmo refuses every
+attempt with `400 WH006`, identically, for ever. 0.1.1 kept asking every
+fifteen minutes anyway, against a rate-limited account, without telling anyone
+what to change. So from 0.1.2 the integration asks only when you say it can:
+**Configure → Push events**.
+
+Nothing else changes. All data still arrives by polling — on a 400 calls/hour
+budget, because you use your own application credentials — and camera
+floodlights stay controllable. If you publish Home Assistant over HTTPS or use
+Home Assistant Cloud and want push back, it is one switch. See
+[`docs/MIGRATION.md`](docs/MIGRATION.md).
 
 ---
 
@@ -114,7 +133,9 @@ automations:
 
 | Document | Contents |
 | --- | --- |
-| [`CHANGELOG.md`](CHANGELOG.md) | What changed in 0.1.0 and why |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release and why |
+| [`docs/RELEASE_0.1.2.md`](docs/RELEASE_0.1.2.md) | Release record, 0.1.2 — **read §5 before upgrading** |
+| [`docs/AUDIT_0.1.2.md`](docs/AUDIT_0.1.2.md) | Live soak and review of 0.1.1 |
 | [`docs/RELEASE_0.1.1.md`](docs/RELEASE_0.1.1.md) | Release record, 0.1.1 |
 | [`docs/DEFECT_REGISTER.md`](docs/DEFECT_REGISTER.md) | Every defect → fix → test, plus rejected recommendations |
 | [`docs/AUDIT_0.1.1.md`](docs/AUDIT_0.1.1.md) | **External independent audit of 0.1.0** and its remediation |
@@ -123,6 +144,7 @@ automations:
 | [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) | **What was and was not executed before release** |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Platform baseline and the 2026 deprecation sweep |
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | Cut-over from the built-in integration, preserving entity IDs |
+| [`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) | **Soak checklist — work through this before any unattended deployment** |
 | [`docs/RELEASE_0.1.0.md`](docs/RELEASE_0.1.0.md) | Release record and acceptance criteria |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Trust boundaries and reporting |
 
@@ -154,10 +176,15 @@ Stated plainly rather than omitted:
 
 - Tier 2 integration tests are authored but **still have not been executed**.
   This is not a formality: it is the direct cause of the two availability
-  regressions that 0.1.1 fixes. Do not deploy to an unattended installation
-  until CI has run them green. See
+  regressions that 0.1.1 fixed, and 0.1.2's push-event gating is a load-time
+  decision that only tier 2 reaches. Do not deploy to an unattended
+  installation until CI has run them green. See
   [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) §4.
-- No live deployment against real Netatmo hardware was performed.
+- A live soak against a real Netatmo account **was** performed for 0.1.2, on a
+  weather station only. It found E-010. Cameras, thermostats and presence
+  devices remain unexercised against real hardware, as does push delivery.
+- 0.1.2 has **not** been independently audited. 0.1.1 was, and that audit found
+  four regressions this project had introduced.
 - No automated diff against the upstream core integration; drift review is
   manual.
 - No brand icon: HA brand images are keyed by domain and the central brands

@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.netatmo_hardened.const import DOMAIN
+from custom_components.netatmo_hardened.const import CONF_ENABLE_WEBHOOK, DOMAIN
 
 CLIENT_ID = "1234"
 CLIENT_SECRET = "5678"
@@ -29,13 +29,13 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     return
 
 
-@pytest.fixture
-def mock_config_entry() -> MockConfigEntry:
-    """Return a configured Netatmo config entry."""
+def _make_config_entry(options: dict) -> MockConfigEntry:
+    """Build a configured Netatmo config entry with the given options."""
     return MockConfigEntry(
         domain=DOMAIN,
         unique_id=DOMAIN,
         title="Netatmo",
+        options=options,
         data={
             "auth_implementation": "cloud",
             "webhook_id": "test-webhook-id",
@@ -59,6 +59,32 @@ def mock_config_entry() -> MockConfigEntry:
             },
         },
     )
+
+
+@pytest.fixture
+def mock_config_entry() -> MockConfigEntry:
+    """Return a configured Netatmo config entry with push events enabled.
+
+    [hardened-fork] Push events became opt-in in 0.1.2, so an entry with no
+    options no longer wires up the webhook subsystem at all. The default
+    fixture therefore opts *in*, because most of this suite exists to exercise
+    webhook behaviour and would otherwise pass vacuously - asserting that
+    nothing happened, for the wrong reason.
+
+    Tests that need the shipped default use ``push_disabled_config_entry``.
+    """
+    return _make_config_entry({CONF_ENABLE_WEBHOOK: True})
+
+
+@pytest.fixture
+def push_disabled_config_entry() -> MockConfigEntry:
+    """Return an entry with push events left at the shipped default.
+
+    Options are empty rather than ``{"enable_webhook": False}`` so this also
+    covers the upgrade path: an entry created by 0.1.0 or 0.1.1 has no
+    ``enable_webhook`` key at all and must take the default, which is off.
+    """
+    return _make_config_entry({})
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@
     "media_source"
   ],
   "codeowners": [
-    "@ngen-advisory"
+    "@temp"
   ],
   "config_flow": true,
   "dependencies": [
@@ -25,5 +25,5 @@
     "pyatmo==9.9.0"
   ],
   "single_config_entry": true,
-  "version": "0.1.1"
+  "version": "0.1.2"
 }

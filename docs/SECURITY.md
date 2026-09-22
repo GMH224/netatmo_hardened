@@ -1,6 +1,6 @@
 # Security Policy
 
-**Release:** 0.1.0
+**Release:** 0.1.0 · Reviewed for 0.1.2: unchanged. The push-event option (F-001) only decides whether the webhook ingress boundary is wired up at all; it adds no new trust boundary. Disabling push removes an ingress surface rather than adding one.
 
 ## Reporting a vulnerability
 

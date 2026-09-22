@@ -1,6 +1,6 @@
 # Platform Compatibility and Deprecation Sweep
 
-**Release:** 0.1.0
+**Release:** 0.1.0 · Reviewed for 0.1.2: unchanged. 0.1.2 introduces no new Home Assistant API usage and no dependency change, so the deprecation sweep below still applies as written.
 **Baseline:** Home Assistant **2026.9**, Python **3.14.2**, pyatmo **9.9.0**
 
 This document exists because the version this release replaced declared a

@@ -58,6 +58,7 @@ docs/
 ├── TEST_PLAN.md            Objectives and coverage map
 ├── VERIFICATION_REPORT.md  What was and was not executed
 ├── COMPATIBILITY.md        Platform baseline and 2026 deprecation sweep
+├── COMMISSIONING.md        Live soak checklist before unattended deployment
 ├── MIGRATION.md            Cut-over from the built-in integration
 └── SECURITY.md             Trust boundaries
 ```
@@ -95,6 +96,14 @@ the logic was extracted into pure functions specifically so that it could be.
 **Condition.** CI runs tier 2 on every push. **Do not deploy 0.1.1 to an
 unattended installation until that job has passed at least once**, and update
 `VERIFICATION_REPORT.md` with the result.
+
+**Compensating control.** `COMMISSIONING.md` adds a live soak checklist. It
+exists because both of the defects that made this release necessary were
+invisible to static analysis and to every executed test, yet would have been
+obvious within hours of real use - a reload cycle is plain in the log, a
+missing webhook shows on the first restart. For this defect class a supervised
+soak is the highest-yield verification available, and it does not depend on
+the Python version that blocks tier 2.
 
 ## 6. Upgrade
 

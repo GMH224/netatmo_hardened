@@ -132,7 +132,21 @@ class NetatmoCameraLight(NetatmoModuleEntity, LightEntity):
     @property
     @override
     def available(self) -> bool:
-        """If the webhook is not established, mark as unavailable."""
+        """Unavailable only when push is expected but not working.
+
+        [hardened-fork] Camera floodlight state arrives by push, so upstream
+        marked the entity unavailable whenever no webhook was established. With
+        push now opt-in (0.1.2) that rule would strand the entity permanently
+        on any installation without a public HTTPS endpoint - unavailable
+        rather than merely stale, so not even controllable.
+
+        When the operator has deliberately turned push off, the entity stays
+        available: commands still work, and the reported state is refreshed by
+        polling. When push is expected but not established, the original
+        behaviour applies, because then something really is wrong.
+        """
+        if not self.data_handler.webhook_expected:
+            return super().available
         return super().available and bool(self.data_handler.webhook)
 
     @override

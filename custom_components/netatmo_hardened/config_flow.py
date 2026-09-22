@@ -17,6 +17,7 @@ from homeassistant.helpers import config_validation as cv
 from .api import get_api_scopes
 from .const import (
     CONF_AREA_NAME,
+    CONF_ENABLE_WEBHOOK,
     CONF_LAT_NE,
     CONF_LAT_SW,
     CONF_LON_NE,
@@ -24,6 +25,7 @@ from .const import (
     CONF_NEW_AREA,
     CONF_PUBLIC_MODE,
     CONF_WEATHER_AREAS,
+    DEFAULT_ENABLE_WEBHOOK,
     DOMAIN,
 )
 from .coordinator import NetatmoConfigEntry
@@ -113,8 +115,50 @@ class NetatmoOptionsFlowHandler(OptionsFlow):
         self.options.setdefault(CONF_WEATHER_AREAS, {})
 
     async def async_step_init(self, user_input: dict | None = None) -> ConfigFlowResult:
-        """Manage the Netatmo options."""
-        return await self.async_step_public_weather_areas()
+        """Choose what to configure."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["push_events", "public_weather_areas"],
+        )
+
+    async def async_step_push_events(
+        self, user_input: dict | None = None
+    ) -> ConfigFlowResult:
+        """Enable or disable webhook-delivered push events.
+
+        [hardened-fork] Added in 0.1.2, default off.
+
+        Netatmo will only register a webhook against a publicly reachable HTTPS
+        endpoint on port 443. An installation without one - which is the common
+        case for a purely local Home Assistant - cannot use push events at all:
+        every registration is refused with `400 - invalid webhook url (WH006)`.
+        Leaving the subsystem switched on in that situation produces permanent,
+        futile API traffic against a rate-limited account and a warning in the
+        log every fifteen minutes.
+
+        It is therefore opt-in rather than opt-out: the operator is the only
+        party who knows whether their deployment is reachable from the
+        internet, and the safe default is not to assume that it is. Turning
+        this on without such an endpoint is harmless but useless - it will
+        raise a repair issue explaining why (defect E-010).
+        """
+        if user_input is not None:
+            self.options[CONF_ENABLE_WEBHOOK] = user_input[CONF_ENABLE_WEBHOOK]
+            return self._create_options_entry()
+
+        return self.async_show_form(
+            step_id="push_events",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required(
+                        CONF_ENABLE_WEBHOOK,
+                        default=self.options.get(
+                            CONF_ENABLE_WEBHOOK, DEFAULT_ENABLE_WEBHOOK
+                        ),
+                    ): bool,
+                }
+            ),
+        )
 
     async def async_step_public_weather_areas(
         self, user_input: dict | None = None
@@ -217,10 +261,15 @@ class NetatmoOptionsFlowHandler(OptionsFlow):
         return self.async_show_form(step_id="public_weather", data_schema=data_schema)
 
     def _create_options_entry(self) -> ConfigFlowResult:
-        """Update config entry options."""
-        return self.async_create_entry(
-            title="Netatmo Public Weather", data=self.options
-        )
+        """Write the accumulated options back to the config entry.
+
+        [hardened-fork] The title was "Netatmo Public Weather", which stopped
+        being true in 0.1.2 when push events joined the options flow. Home
+        Assistant ignores the title of an options entry, so this was only ever
+        a label for whoever read the code next - which is reason to keep it
+        accurate, not reason to leave it wrong.
+        """
+        return self.async_create_entry(title="Netatmo options", data=self.options)
 
 
 def fix_coordinates(user_input: dict) -> dict:

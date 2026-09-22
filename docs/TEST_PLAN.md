@@ -1,6 +1,6 @@
 # Test Plan
 
-**Release:** 0.1.1
+**Release:** 0.1.2
 **Baseline:** Home Assistant 2026.9 · Python 3.14.2 · pyatmo 9.9.0
 
 ## 1. Strategy
@@ -49,6 +49,10 @@ testable, not a cosmetic refactor.
 | **E-007** | Camera timeouts are absorbed on both media paths | 2 | `test_camera_snapshot_timeout_is_absorbed`, `test_camera_url_refresh_timeout_is_absorbed` |
 | **E-009** | Control characters rejected before reaching logs | 1 | 8 cases + `test_rejected_event_type_cannot_reach_the_log_summary` |
 | C-17 | No direct mapping index on device types | Static + review | `ruff`, manual |
+| **E-010** | A rejection that cannot succeed stops the retry loop and raises a repair issue; a transient one keeps retrying | 1 + 2 | `test_deterministic_rejections_are_permanent` (4 statuses), `test_transient_statuses_keep_retrying` (8 statuses), `test_missing_status_keeps_retrying`, `test_throttling_overrides_a_permanent_looking_status`, `test_permanent_status_set_is_explicit` + `test_permanent_rejection_stops_retrying` (4 statuses), `test_transient_failure_still_retries`, `test_throttling_still_retries`, `test_successful_registration_clears_the_issue` |
+| **E-011** | The shipped translation file is literal text, and matches the reviewed source | 1 | `test_shipped_translations_contain_no_unresolved_references`, `test_strings_and_translations_agree`, `test_user_facing_keys_have_text` (4 keys), `test_webhook_issue_text_carries_the_error_placeholder`, `test_push_events_option_step_is_translated` |
+| **F-001** | Push events default to off, load cleanly without a webhook, and register when enabled | 1 + 2 | `test_push_events_default_to_disabled`, `test_option_key_is_stable`, `test_repair_issue_key_is_stable` + `test_default_entry_registers_no_webhook`, `test_entry_still_loads_and_polls_without_push`, `test_opted_in_entry_registers_a_webhook`, `test_disabling_push_reloads_and_drops_the_webhook`, `test_disabling_push_clears_a_previous_rejection_issue` |
+| **F-001 / E-001** | The new reload path is reached by the push-event option only | 2 | `test_unrelated_option_change_does_not_reload` |
 
 ## 3. Adversarial payload corpus
 
@@ -81,7 +85,9 @@ external audit's NET-031 through NET-033, which were reclassified from
 | Sustained event-flood behaviour and event-loop latency | Not covered — needs a live harness |
 | Listener/timer growth over days of real reconnect cycles | Structural test only |
 | Late async completion after unload mutating a new runtime | Partially covered (C-12); no generation token |
-| Full HTTP status matrix (400/409/502/503/504, TLS, DNS) | Partially covered (401/403/429/500) |
+| Full HTTP status matrix (400/409/502/503/504, TLS, DNS) | Partially covered (401/403/429/500); webhook-registration classification now covers 400/401/403/404/408/409/425/429/500/502/503/504 at tier 1 |
+| Push-event path with a real public HTTPS endpoint | Not covered — the soak environment has none, so F-001's enabled branch is CI-only |
+| Non-English translation files | Not covered — only `en.json` ships. A future locale must expand its own references (E-011) |
 | Live cooling-mode payloads from real hardware | Not covered — C-14 built on the pyatmo data model |
 
 ## 5. Entry and exit criteria

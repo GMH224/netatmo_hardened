@@ -1,6 +1,6 @@
 # Migration Guide
 
-**Applies to:** 0.1.0 · domain `netatmo_hardened`
+**Applies to:** 0.1.2 · domain `netatmo_hardened`
 
 ## Why the domain is not `netatmo`
 
@@ -32,6 +32,7 @@ disable it and the core integration takes over.
 | Bus event | `netatmo_event` | `netatmo_hardened_event` |
 | Account linking | Home Assistant Cloud, or your own credentials | **Your own credentials only** — see below |
 | API rate budget | 150 calls/hour (cloud) | 400 calls/hour (own app) |
+| Push events (webhook) | Always on | **Opt-in, off by default** — see below |
 
 ### Home Assistant Cloud linking is not available
 
@@ -143,13 +144,68 @@ installing the custom integration changes nothing until you configure it.
 
 7. **Re-create public weather areas.** These live in the config entry's
    options, not in the entity registry, so they do not carry over. Settings →
-   Devices & services → Netatmo (hardened) → **Configure**.
+   Devices & services → Netatmo (hardened) → **Configure** → *Public weather
+   areas*.
+
+8. **Decide about push events.** Settings → Devices & services → Netatmo
+   (hardened) → **Configure** → *Push events*. See the section below — the
+   default is off, and for most installations that is correct.
 
 ### If an entity ID came back suffixed
 
 Something still held the old ID. Settings → Devices & services → Entities,
 search for the `_2` entity, open it, and edit the entity ID back to the
 original. The old one will be free if step 3 completed.
+
+---
+
+## Push events are off by default (0.1.2)
+
+Netatmo delivers camera motion, thermostat mode changes and similar events by
+calling a **webhook** — which means Netatmo's servers must be able to reach
+your Home Assistant. It registers one only against a publicly reachable HTTPS
+endpoint on port 443.
+
+Most Home Assistant installations are not published to the internet, and for an
+ICS-adjacent deployment that is usually the *preferable* configuration. Such an
+installation cannot use push events at all: Netatmo answers every registration
+attempt with `400 — invalid webhook url (WH006)`, identically, for ever.
+
+Up to 0.1.1 the integration asked anyway, every fifteen minutes, indefinitely
+(defect E-010). From 0.1.2 it asks only if you tell it to.
+
+### Which case are you in?
+
+| | Turn push events on? |
+| --- | --- |
+| Home Assistant is only reachable on your LAN or over a VPN | **No.** Leave the default. |
+| You publish Home Assistant over HTTPS on port 443 (reverse proxy, own domain) | Yes. |
+| You have a **Home Assistant Cloud** subscription | Yes — Cloud provides the public endpoint. Note that Cloud *account linking* is still unavailable for this domain, but the cloudhook is not. |
+| Not sure | **No.** Leave it off, confirm everything works, turn it on later if you want to. |
+
+### What you lose with it off
+
+Only latency, and only for event-driven things. Every sensor value still
+arrives — the integration polls, and with your own application credentials it
+polls on a 400 calls/hour budget rather than Cloud's 150. What changes is that
+a camera motion event or a thermostat mode change shows up on the next poll
+rather than within a second.
+
+Camera floodlight entities stay available and controllable with push off. Under
+0.1.1 they were marked unavailable whenever no webhook existed.
+
+### Upgrading from 0.1.1 with push working
+
+If you already had a working webhook on 0.1.1 — you publish HA over HTTPS, or
+you use Home Assistant Cloud — **push stops after the 0.1.2 update until you
+turn it on**. This is the one behaviour change in that release. Enable it under
+Configure → *Push events*; the integration reloads and re-registers.
+
+### Turning it on when you cannot use it
+
+Harmless. The registration is refused, the retry loop stops immediately, and a
+repair issue appears under Settings → System → Repairs quoting Netatmo's error
+and telling you what to change. Nothing else is affected.
 
 ---
 

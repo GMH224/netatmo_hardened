@@ -48,6 +48,17 @@ SIGNAL_NAME = "signal_name"
 # [hardened-fork] Repair issue identifiers. Each is suffixed with the config
 # entry id at creation so multiple entries cannot collide.
 ISSUE_PARTIAL_SCOPES = "partial_oauth_scopes"
+ISSUE_WEBHOOK_REJECTED = "webhook_registration_rejected"
+
+# [hardened-fork] Webhook (push events) opt-in.
+#
+# Netatmo will only register a webhook against a publicly reachable HTTPS
+# endpoint on port 443. An installation without one cannot use push events at
+# all, and every registration attempt is refused deterministically - so the
+# subsystem is off unless the operator states that their deployment has such
+# an endpoint. Polling is unaffected either way; only push is lost.
+CONF_ENABLE_WEBHOOK = "enable_webhook"
+DEFAULT_ENABLE_WEBHOOK = False
 
 API_SCOPES_EXCLUDED_FROM_CLOUD = [
     "access_camerapro",

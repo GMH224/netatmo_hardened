@@ -38,6 +38,8 @@ from pyatmo.schedule import Schedule
 
 from .const import (
     CAMERA_CONNECTION_WEBHOOKS,
+    CONF_ENABLE_WEBHOOK,
+    DEFAULT_ENABLE_WEBHOOK,
     DOMAIN,
     MANUFACTURER,
     NETATMO_CREATE_BUTTON,
@@ -243,6 +245,11 @@ class NetatmoDataHandler:
         # so the update listener can tell a real options change from the
         # routine OAuth token writes that also fire it (defect E-001).
         self.active_options: dict[str, Any] = deepcopy(dict(config_entry.options))
+        # Whether the operator has declared that push events can work here.
+        # Distinct from `webhook`, which reports whether one is *established*.
+        self.webhook_expected: bool = bool(
+            config_entry.options.get(CONF_ENABLE_WEBHOOK, DEFAULT_ENABLE_WEBHOOK)
+        )
 
     @property
     def _watchdog_reloads(self) -> int:

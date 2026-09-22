@@ -4,6 +4,79 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-09-22
+
+Found by running 0.1.1 in a real Home Assistant, exactly as
+[`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) prescribes. The first defect
+surfaced four minutes after start.
+
+Full analysis: [`docs/AUDIT_0.1.2.md`](docs/AUDIT_0.1.2.md).
+Release record: [`docs/RELEASE_0.1.2.md`](docs/RELEASE_0.1.2.md).
+
+### Added
+
+- **Push events can now be turned off, and are off by default** (F-001).
+  Netatmo registers a webhook only against a publicly reachable HTTPS endpoint
+  on port 443. An installation without one — the normal case for a Home
+  Assistant that is not published to the internet — cannot use push events at
+  all, and 0.1.1 would keep asking anyway.
+
+  There is now an options menu with a **Push events** page. The integration
+  cannot detect whether your deployment is reachable from the internet, so it
+  no longer assumes that it is.
+
+  **If you use Home Assistant Cloud, or publish HA over HTTPS on port 443, push
+  events stop after this update until you enable them** in Settings → Devices &
+  services → Netatmo (hardened) → Configure → Push events. Everything still
+  works meanwhile; data arrives on the polling interval rather than instantly.
+
+  Camera floodlights stay *available* when push is off — controllable, with
+  state refreshed by polling. Under 0.1.1 a missing webhook made them
+  unavailable, which would have been permanent under the new default.
+
+### Fixed
+
+- **A webhook rejection that can never succeed is no longer retried for ever**
+  (E-010, a regression introduced by 0.1.1). Netatmo answers `400 — invalid
+  webhook url (WH006)` when the callback URL is not publicly reachable over
+  HTTPS. That answer does not change until a human changes the network, but
+  0.1.1 retried it every fifteen minutes indefinitely: useless API calls
+  against a rate-limited account, a warning in the log for ever, and no
+  statement of what to fix.
+
+  Upstream had the opposite defect — it gave up after the *first* failure, so a
+  single rate-limit response left push events dead until someone pressed
+  Reload. Neither version asked the actual question, which is whether another
+  attempt could ever succeed. It is now asked explicitly: `400/401/403/404`
+  stop the loop and raise a repair issue quoting Netatmo's own error, while
+  throttling (which Netatmo reports as `403`) and everything else keeps
+  retrying as before.
+
+- **24 user-facing strings displayed as raw placeholder text** (E-011). Wind
+  directions, the public weather options title, the authentication step titles
+  and two service field descriptions shipped as unresolved
+  `[%key:component::netatmo::…%]` references. Home Assistant expands those when
+  it *builds core*, not when it loads translations — so a core integration
+  ships an expanded file while a custom integration ships whatever is in it.
+  All references are now literal English, and `strings.json` and
+  `translations/en.json` are byte-identical, with a test that keeps them so.
+
+### Testing
+
+- 35 new tier-1 tests and 9 new tier-2 tests (159 tier-1 total, up from 124).
+  Nine of the new tier-1 tests check the *shipped package* rather than the
+  source — the version documents for this release exist, the changelog records
+  it, the runtime translation file is present, the domain has not drifted back
+  to `netatmo`, and the dependency pin is exact. Both P0-x and E-011 were
+  defects in what shipped, not in what was written.
+- The tier-2 fixture now opts *in* to push events, because with the new default
+  every webhook test in the suite would otherwise have passed vacuously. A
+  separate fixture covers the shipped default and the 0.1.1 → 0.1.2 upgrade
+  path.
+- Tier 2 remains **unexecuted** in the authoring environment for the reason
+  recorded since 0.1.0 (Python 3.14.2 unavailable). See
+  [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md).
+
 ## [0.1.1] - 2026-09-22
 
 **0.1.0 is superseded and should not be deployed.** An independent external
@@ -283,5 +356,6 @@ documented with reasoning in `docs/DEFECT_REGISTER.md` §4:
 - pyatmo held at 9.9.0; 9.9.1 exists and is a 0.2.0 task.
 - pyatmo 9.9.0's own webhook parser is not yet adopted; planned for 0.2.0.
 
+[0.1.2]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.2
 [0.1.1]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.0

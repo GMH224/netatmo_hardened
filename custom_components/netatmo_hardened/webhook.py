@@ -42,8 +42,10 @@ from homeassistant.const import (
     EVENT_HOMEASSISTANT_STOP,
 )
 from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
+from pyatmo.exceptions import ApiTooManyRequestError
 
 from . import event_validation as validate
 from .const import (
@@ -57,11 +59,13 @@ from .const import (
     EVENT_ID_MAP,
     EVENT_TYPE_OUTDOOR,
     EVENT_TYPE_THERM_MODE,
+    ISSUE_WEBHOOK_REJECTED,
     NETATMO_EVENT,
     WEBHOOK_DEACTIVATION,
     WEBHOOK_PUSH_TYPE,
 )
 from .coordinator import NetatmoConfigEntry, NetatmoDataHandler
+from .helper import webhook_failure_is_permanent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -336,6 +340,35 @@ async def async_register_webhook(
         if registered_locally:
             webhook_unregister(hass, webhook_id)
 
+        # [hardened-fork] Not every failure is worth another attempt (E-010).
+        #
+        # Netatmo answers `400 - invalid webhook url (WH006)` when the URL is
+        # not a publicly reachable HTTPS endpoint on port 443. That is a
+        # property of the deployment, not a passing condition: retrying it
+        # every fifteen minutes for ever is useless API traffic against a
+        # rate-limited account and a warning in the log for ever. Tell the
+        # operator what to change and stop.
+        throttled = isinstance(err, (pyatmo.ApiThrottlingError, ApiTooManyRequestError))
+        if webhook_failure_is_permanent(
+            getattr(err, "status", None), throttled=throttled
+        ):
+            _LOGGER.error(
+                "Netatmo rejected the webhook registration and retrying cannot "
+                "help: %s. Push events are unavailable until this is resolved; "
+                "polling is unaffected",
+                err,
+            )
+            ir.async_create_issue(
+                hass,
+                DOMAIN,
+                f"{ISSUE_WEBHOOK_REJECTED}_{entry.entry_id}",
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_WEBHOOK_REJECTED,
+                translation_placeholders={"error": str(err)},
+            )
+            return
+
         delay = _retry_delay(err, _retry)
         _LOGGER.warning(
             "Netatmo webhook registration failed (%s). Retrying in %s seconds "
@@ -364,6 +397,7 @@ async def async_register_webhook(
     # URL at debug level, putting a bearer credential into log files, backups
     # and bug reports (defect C-11, external finding SEC-001).
     _LOGGER.debug("Netatmo webhook registered (id=<redacted>)")
+    ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_WEBHOOK_REJECTED}_{entry.entry_id}")
 
     async_install_stop_listener(hass, entry)
 

@@ -1,31 +1,31 @@
 {
   "config": {
     "abort": {
-      "missing_configuration": "[%key:common::config_flow::abort::oauth2_missing_configuration%]",
-      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
+      "missing_configuration": "The component is not configured. Please follow the documentation.",
+      "reauth_successful": "Re-authentication was successful"
     },
     "create_entry": {
-      "default": "[%key:common::config_flow::create_entry::authenticated%]"
+      "default": "Successfully authenticated"
     },
     "step": {
       "pick_implementation": {
         "data": {
-          "implementation": "[%key:common::config_flow::data::implementation%]"
+          "implementation": "Application credentials"
         },
         "data_description": {
-          "implementation": "[%key:common::config_flow::description::implementation%]"
+          "implementation": "The credentials you want to use to authenticate."
         },
-        "title": "[%key:common::config_flow::title::oauth2_pick_implementation%]"
+        "title": "Pick authentication method"
       },
       "reauth_confirm": {
         "description": "The Netatmo integration needs to re-authenticate your account",
-        "title": "[%key:common::config_flow::title::reauth%]"
+        "title": "Authentication expired for {name}"
       }
     }
   },
   "device_automation": {
     "trigger_subtype": {
-      "away": "[%key:common::state::not_home%]",
+      "away": "Away",
       "hg": "Frost guard",
       "schedule": "Schedule"
     },
@@ -40,8 +40,8 @@
       "person_away": "{entity_name} detected a person has left",
       "set_point": "Target temperature {entity_name} set manually",
       "therm_mode": "{entity_name} switched to \"{subtype}\"",
-      "turned_off": "[%key:common::device_automation::trigger_type::turned_off%]",
-      "turned_on": "[%key:common::device_automation::trigger_type::turned_on%]",
+      "turned_off": "{entity_name} turned off",
+      "turned_on": "{entity_name} turned on",
       "vehicle": "{entity_name} detected a vehicle"
     }
   },
@@ -68,7 +68,7 @@
           "preset_mode": {
             "state": {
               "frost_guard": "Frost guard",
-              "manual": "[%key:common::state::manual%]",
+              "manual": "Manual",
               "schedule": "Schedule"
             }
           }
@@ -87,14 +87,14 @@
       "gust_direction": {
         "name": "Gust direction",
         "state": {
-          "e": "[%key:component::netatmo::entity::sensor::wind_direction::state::e%]",
-          "n": "[%key:component::netatmo::entity::sensor::wind_direction::state::n%]",
-          "ne": "[%key:component::netatmo::entity::sensor::wind_direction::state::ne%]",
-          "nw": "[%key:component::netatmo::entity::sensor::wind_direction::state::nw%]",
-          "s": "[%key:component::netatmo::entity::sensor::wind_direction::state::s%]",
-          "se": "[%key:component::netatmo::entity::sensor::wind_direction::state::se%]",
-          "sw": "[%key:component::netatmo::entity::sensor::wind_direction::state::sw%]",
-          "w": "[%key:component::netatmo::entity::sensor::wind_direction::state::w%]"
+          "e": "East",
+          "n": "North",
+          "ne": "Northeast",
+          "nw": "Northwest",
+          "s": "South",
+          "se": "Southeast",
+          "sw": "Southwest",
+          "w": "West"
         }
       },
       "gust_strength": {
@@ -172,6 +172,10 @@
     "partial_oauth_scopes": {
       "title": "Netatmo authorisation is incomplete",
       "description": "The Netatmo account did not grant all the permissions this integration can use. Features relying on the missing permissions will be unavailable, but everything else works normally.\n\nMissing permissions: {scopes}\n\nTo grant them, re-authenticate the integration and accept all requested permissions."
+    },
+    "webhook_registration_rejected": {
+      "title": "Netatmo push events could not be enabled",
+      "description": "Netatmo refused to register the webhook and retrying cannot help:\n\n`{error}`\n\nThis almost always means Home Assistant is not reachable from the internet over HTTPS on port 443, which Netatmo requires.\n\nEither configure a public HTTPS URL under Settings > System > Network, or turn push events off in the integration options. Polling is unaffected - all data still arrives, just on the polling interval."
     }
   },
   "options": {
@@ -208,7 +212,24 @@
           "weather_areas": "Configured weather areas to edit or remove."
         },
         "description": "Configure public weather sensors.",
-        "title": "[%key:component::netatmo::options::step::public_weather::title%]"
+        "title": "Netatmo public weather sensor"
+      },
+      "init": {
+        "title": "Netatmo options",
+        "menu_options": {
+          "push_events": "Push events (webhook)",
+          "public_weather_areas": "Public weather areas"
+        }
+      },
+      "push_events": {
+        "title": "Push events",
+        "description": "Netatmo can push events (camera motion, thermostat mode changes) to Home Assistant instead of waiting for the next poll. This requires your Home Assistant to be reachable from the internet over HTTPS on port 443.\n\nIf it is not, leave this off: every registration attempt will be refused and the integration will keep retrying against a rate-limited account for nothing. All data still arrives by polling either way - only the speed of event-driven updates changes.",
+        "data": {
+          "enable_webhook": "Enable push events"
+        },
+        "data_description": {
+          "enable_webhook": "Only enable this if Home Assistant has a public HTTPS URL on port 443, or you use Home Assistant Cloud."
+        }
       }
     }
   },
@@ -270,7 +291,7 @@
       "fields": {
         "schedule_name": {
           "description": "Schedule name.",
-          "name": "[%key:component::netatmo::device_automation::trigger_subtype::schedule%]"
+          "name": "Schedule"
         }
       },
       "name": "Set heating schedule"
@@ -280,7 +301,7 @@
       "fields": {
         "end_datetime": {
           "description": "Date & time the target temperature will be active until.",
-          "name": "[%key:component::netatmo::services::set_preset_mode_with_end_datetime::fields::end_datetime::name%]"
+          "name": "End date & time"
         },
         "target_temperature": {
           "description": "The target temperature for the device.",
@@ -293,8 +314,8 @@
       "description": "Sets the target temperature for a Netatmo climate device with time period.",
       "fields": {
         "target_temperature": {
-          "description": "[%key:component::netatmo::services::set_temperature_with_end_datetime::fields::target_temperature::description%]",
-          "name": "[%key:component::netatmo::services::set_temperature_with_end_datetime::fields::target_temperature::name%]"
+          "description": "The target temperature for the device.",
+          "name": "Target temperature"
         },
         "time_period": {
           "description": "The time period which the temperature setting will be active for.",

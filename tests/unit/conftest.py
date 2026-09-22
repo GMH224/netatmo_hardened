@@ -14,10 +14,11 @@ execute ``custom_components/netatmo/__init__.py`` and pull in Home Assistant.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -47,3 +48,46 @@ def helper() -> ModuleType:
 def validate() -> ModuleType:
     """Return the component's webhook validation module."""
     return _load("event_validation")
+
+
+def _literal_constants(path: Path) -> dict[str, object]:
+    """Return the literal module-level constants defined in a source file.
+
+    ``const.py`` cannot be imported in tier 1 - it pulls in
+    ``homeassistant.const.Platform`` - but the values tier 1 needs to pin down
+    are all plain literals. Reading them out of the parse tree keeps the
+    assertions against the *shipped source* without standing up Home
+    Assistant, and without a stub module that could drift from the real one.
+
+    Only simple ``NAME = <literal>`` assignments are returned; anything else
+    (the ``Platform`` lists, f-strings, comprehensions) is skipped.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    constants: dict[str, object] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        try:
+            constants[target.id] = ast.literal_eval(node.value)
+        except ValueError:
+            continue
+    return constants
+
+
+@pytest.fixture(scope="session")
+def const() -> SimpleNamespace:
+    """Return the component's literal constants as attributes."""
+    return SimpleNamespace(**_literal_constants(COMPONENT_DIR / "const.py"))
+
+
+@pytest.fixture(scope="session")
+def component_dir() -> Path:
+    """Return the component's source directory.
+
+    Used by the packaging and translation tests, which read the shipped files
+    as data rather than importing them.
+    """
+    return COMPONENT_DIR
