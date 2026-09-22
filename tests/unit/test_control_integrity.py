@@ -153,23 +153,30 @@ def test_event_keys_are_strings_for_url_round_trip(helper):
 
 
 # --------------------------------------------------------------------------
-# C-21 - public weather coordinate normalisation
+# C-21 / E-006 - public weather coordinate normalisation
 # --------------------------------------------------------------------------
+
+LATITUDE_LIMIT = 90.0
+LONGITUDE_LIMIT = 180.0
 
 
 @pytest.mark.parametrize(
-    "coordinate",
+    ("coordinate", "limit"),
     [
-        0.0000001,
-        -0.0000001,
-        1e-7,
-        -1e-7,
-        1e-5,
-        0.0,
-        8.1234567,
-        52.0,
-        -179.9999999,
-        90.0,
+        (0.0000001, LATITUDE_LIMIT),
+        (-0.0000001, LATITUDE_LIMIT),
+        (1e-7, LATITUDE_LIMIT),
+        (-1e-7, LATITUDE_LIMIT),
+        (1e-5, LATITUDE_LIMIT),
+        (0.0, LATITUDE_LIMIT),
+        (8.1234567, LATITUDE_LIMIT),
+        (52.0, LATITUDE_LIMIT),
+        (90.0, LATITUDE_LIMIT),
+        (-90.0, LATITUDE_LIMIT),
+        (89.9999999, LATITUDE_LIMIT),
+        (180.0, LONGITUDE_LIMIT),
+        (-180.0, LONGITUDE_LIMIT),
+        (-179.9999999, LONGITUDE_LIMIT),
     ],
     ids=[
         "tiny-positive",
@@ -180,53 +187,107 @@ def test_event_keys_are_strings_for_url_round_trip(helper):
         "zero",
         "full-precision",
         "integer-valued",
-        "near-min-longitude",
         "max-latitude",
+        "min-latitude",
+        "just-inside-max-latitude",
+        "max-longitude",
+        "min-longitude",
+        "just-inside-min-longitude",
     ],
 )
-def test_coordinate_normalisation_never_raises(helper, coordinate):
-    """Any valid coordinate must normalise without an exception.
+def test_normalised_coordinate_stays_in_range(helper, coordinate, limit):
+    """The output must be a legal coordinate. Always.
 
-    Upstream read ``str(value).split(".")[1]``, which raises ``IndexError`` for
-    every float Python renders in scientific notation - that is, any magnitude
-    below 1e-4. A user near the equator or the prime meridian could not save a
-    public weather area at all.
+    This is the assertion that was missing in 0.1.0. The test existed and
+    included 90.0, but only asserted ``isinstance(result, float)`` - so it
+    verified that the function did not crash, not that it produced a usable
+    value. ``normalise_coordinate(90.0)`` returned ``90.0000001`` and the suite
+    stayed green (defect E-006).
+
+    A test that checks the weaker of two available properties is worse than no
+    test, because it converts an unknown into false confidence.
     """
-    result = helper.normalise_coordinate(coordinate)
+    result = helper.normalise_coordinate(coordinate, limit)
     assert isinstance(result, float)
+    assert -limit <= result <= limit, f"{coordinate} normalised out of range"
+
+
+@pytest.mark.parametrize(
+    ("value", "limit"),
+    [(90.0, LATITUDE_LIMIT), (180.0, LONGITUDE_LIMIT)],
+    ids=["latitude-90", "longitude-180"],
+)
+def test_exact_maximum_is_nudged_inward(helper, value, limit):
+    """At the positive boundary the nudge must go inward, not outward."""
+    result = helper.normalise_coordinate(value, limit)
+    assert result < value
+    assert result == pytest.approx(value - 1e-7)
 
 
 def test_coordinate_normalisation_reproduces_old_crash(helper):
-    """Demonstrate the exact input that used to crash the options flow.
+    """The scientific-notation input that used to crash the options flow.
 
-    ``1e-7`` already carries seven decimal places, so the *correct* behaviour is
+    ``1e-7`` already carries seven decimal places, so the correct behaviour is
     to leave it untouched. Upstream could not even get that far: reading
-    ``str(1e-07).split(".")[1]`` raises before any decision is made. The fix
-    therefore preserves upstream's intent while removing the crash.
+    ``str(1e-07).split(".")[1]`` raises before any decision is made.
     """
     value = 1e-7
 
     with pytest.raises(IndexError):
-        # The upstream implementation, verbatim.
-        len(str(value).split(".")[1])
+        len(str(value).split(".")[1])  # the upstream implementation, verbatim
 
-    assert helper.normalise_coordinate(value) == value
+    assert helper.normalise_coordinate(value, LATITUDE_LIMIT) == value
 
 
 @pytest.mark.parametrize(
     ("value", "should_change"),
     [
-        (52.0, True),  # one decimal place - needs padding for the API
-        (52.12, True),  # two decimal places
-        (52.123456, True),  # six decimal places - still short
-        (8.1234567, False),  # exactly seven - already acceptable
-        (1e-7, False),  # seven decimals, rendered in scientific notation
+        (52.0, True),
+        (52.12, True),
+        (52.123456, True),
+        (8.1234567, False),
+        (1e-7, False),
     ],
     ids=["1dp", "2dp", "6dp", "7dp", "7dp-scientific"],
 )
 def test_coordinate_precision_rule_matches_upstream_intent(
     helper, value, should_change
 ):
-    """Padding must apply exactly when precision is below seven decimals."""
-    result = helper.normalise_coordinate(value)
+    """Padding applies exactly when precision is below seven decimals."""
+    result = helper.normalise_coordinate(value, LATITUDE_LIMIT)
     assert (result != value) is should_change
+
+
+# --------------------------------------------------------------------------
+# E-004 - backend command results
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("result", "is_failure"),
+    [
+        (False, True),
+        (True, False),
+        (None, False),
+        (0, False),
+        ("", False),
+        ([], False),
+    ],
+    ids=["false", "true", "none", "zero", "empty-string", "empty-list"],
+)
+def test_only_explicit_false_counts_as_command_failure(helper, result, is_failure):
+    """``False`` means rejected; nothing else may be read as a failure.
+
+    pyatmo's control methods are a mixed bag: ``async_on`` and
+    ``async_set_state`` return ``bool``, while the room-level
+    ``async_therm_set`` / ``async_therm_manual`` / ``async_therm_home`` return
+    ``None`` and give no success indication at all.
+
+    Both halves matter. Treating ``False`` as success publishes state the
+    device never reached (defect E-004). But treating ``None`` as failure would
+    make every thermostat setpoint raise an error - fabricating a guarantee the
+    dependency does not offer, in the opposite direction. Falsy-but-not-False
+    values are covered because ``if not result`` would have been the obvious
+    wrong implementation.
+    """
+    assert helper.command_failed(result) is is_failure

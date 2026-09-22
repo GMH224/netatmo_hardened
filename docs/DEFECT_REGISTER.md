@@ -1,6 +1,6 @@
 # Defect Register and Traceability Matrix
 
-**Release:** 0.1.0
+**Release:** 0.1.1 (cumulative — covers 0.1.0 and 0.1.1)
 **Date:** 2026-09-22
 **Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
 
@@ -16,7 +16,8 @@ quietly omitted.
 | `P0-n` | Packaging / release-integrity defect. Found by the independent audit only. |
 | `C-n` | Code defect. |
 | `D-n` | Home Assistant deprecation to migrate. See `COMPATIBILITY.md`. |
-| `NET-n` / `SEC-n` | Identifiers from the supplied external audit, for cross-reference. |
+| `E-n` | Defects found by the **independent external audit of 0.1.0**. Four are regressions introduced by 0.1.0's own remediation. See `AUDIT_0.1.1.md`. |
+| `NET-n` / `SEC-n` | Identifiers from the first supplied external audit, for cross-reference. |
 
 ---
 
@@ -58,6 +59,34 @@ Ordered by operational consequence, not by discovery order.
 | C-19 | NET-013 | `camera.py:302` | Events keyed on `event_time`; two events in the same second overwrote each other. | Low | Keyed on the event's own id. | `test_events_sharing_a_timestamp_are_both_kept` |
 | C-20 | NET-014 / SEC-008 | `media_source.py:64, 179` | `int(event_id)` raised `ValueError`; chained lookup raised `KeyError`; neither mapped to `Unresolvable`. | Low | String ids end to end; every layer validated; all failures become `Unresolvable`. | `tests/integration/` media source |
 | C-21 | SEC-009 | `config_flow.py:213` | `str(coord).split(".")[1]` raised `IndexError` for any coordinate below 1e-4 (near equator / prime meridian). | Low | `helper.normalise_coordinate()` — numeric, no string parsing. | `test_coordinate_normalisation_never_raises` (10 coords), `test_coordinate_precision_rule_matches_upstream_intent` |
+
+---
+
+## 2a. External audit of 0.1.0 — E-series (fixed in 0.1.1)
+
+All nine findings were independently verified against the source and the pinned
+dependency before acceptance. **R** marks a regression introduced by 0.1.0.
+
+| ID | R | Location (pre-fix) | Defect | Severity | Fix | Verified by |
+| --- | :-: | --- | --- | --- | --- | --- |
+| E-001 | ⚠️ | `__init__.py` update listener | Access-token comparison scheduled a full reload. HA's OAuth2Session persists **every routine refresh** through `async_update_entry`, which fires update listeners — so with ~3 h Netatmo tokens the integration reloaded ~8×/day for ever. | High | Listener compares `entry.options` and never reloads. No reload is needed for credentials: `OAuth2Session` reads `entry.data["token"]` live. | `test_token_refresh_does_not_reload`, `test_repeated_token_refresh_never_reloads`, `test_options_change_still_refreshes_public_weather`, `test_token_refresh_does_not_churn_public_weather` |
+| E-002 | ⚠️ | `webhook.py` registration entry point | `if entry.state is not ConfigEntryState.LOADED: return` at the top, but `async_setup_entry` awaits it while the entry is `SETUP_IN_PROGRESS`. Cloud subscribers got **no webhook at all**; `manage_cloudhook` only fires on a connection-state *change*. | High | Guard removed. Retry callback keeps its `LOADED` check (correct there); unload still cancels pending retries. | `test_webhook_registers_during_setup_with_active_cloud`, `test_registration_is_not_gated_on_loaded_state` |
+| E-003 | ⚠️ | `webhook.py` subevent merge | `{**data, **subevent}` let a nested member overwrite `home_id` / `device_id`, which become the HA event's `device_id`. Shape validation cannot catch a substituted id that names another real device. | ~~High~~ **Medium** — see `AUDIT_0.1.1.md` §4 | `validate.merge_subevent()`: identity comes from the parent envelope only; a member's `type` still names the event. | 9 tests in `test_identity_protection.py` |
+| E-004 | | `switch/light/cover/fan/button/camera/climate` | pyatmo control methods return `bool` and answer `False` on API rejection without raising. Entities awaited and then published optimistic state, so a rejected command still showed ON/OPEN/CLOSED. | High | `helper.command_failed()` + `NetatmoBaseEntity.async_command()`; raises `HomeAssistantError` on `False`, before any state write. | `test_only_explicit_false_counts_as_command_failure` (6 cases), `test_rejected_command_raises_and_leaves_state_alone`, `test_accepted_command_updates_state`, `test_command_with_no_success_indication_is_not_treated_as_failure` |
+| E-005 | | `webhook.py` person loop | `person_id` validated, then dispatched anyway when `None` — neutralising the check. | Medium | `continue` when the id is absent. | Adversarial corpus; tier 2 |
+| E-006 | ⚠️ | `helper.normalise_coordinate` | Nudge was unconditionally additive: `90.0 → 90.0000001`, `180.0 → 180.0000001`, persisted after HA had already range-validated the input. | Medium | Nudge applied inward when outward would leave `[-limit, +limit]`; `limit` is now a required argument. | `test_normalised_coordinate_stays_in_range` (14 coords), `test_exact_maximum_is_nudged_inward` |
+| E-007 | | `camera.py` | `TimeoutError` absent from the recoverable tuple; pyatmo's image request has a finite timeout, and `asyncio.TimeoutError` is not an `aiohttp.ClientError`. Stream URL refresh unwrapped. | Medium | `CAMERA_TRANSPORT_ERRORS = (TimeoutError, aiohttp.ClientError)`; stream path wrapped, falls back to the cached URL. | `test_camera_snapshot_timeout_is_absorbed` (2 cases), `test_camera_url_refresh_timeout_is_absorbed` |
+| E-008 | | `device_trigger.py` discovery | Triggers emitted once per entity; a 5-entity device offered 5 identical choices, differing only by an `entity_id` that attachment ignores. | Low | One trigger per logical device event, carrying a representative entity id so existing automations still validate. | Tier 2 |
+| E-009 | | `event_validation.identifier` | Control characters accepted in identifier-shaped values, which reach the debug log and can forge or corrupt records. | Low | C0/C1/DEL rejected. | 8 tier-1 cases + `test_rejected_event_type_cannot_reach_the_log_summary` |
+
+### Note on E-004 and `None`
+
+The external report cites `climate.py:412` among the ignored-result paths. That
+line calls `Room.async_therm_set`, which returns `None` — pyatmo offers **no**
+success indication for room-level setpoints. `command_failed()` therefore
+treats only an explicit `False` as failure. Reading `None` as failure would
+make every thermostat setpoint raise, fabricating a guarantee the dependency
+does not provide, in the opposite direction from the defect itself.
 
 ---
 

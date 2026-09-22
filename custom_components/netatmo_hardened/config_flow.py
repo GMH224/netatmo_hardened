@@ -31,6 +31,10 @@ from .helper import normalise_coordinate
 
 _LOGGER = logging.getLogger(__name__)
 
+# Legal magnitude of each coordinate, per WGS 84.
+LATITUDE_LIMIT = 90.0
+LONGITUDE_LIMIT = 180.0
+
 
 class NetatmoFlowHandler(
     config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domain=DOMAIN
@@ -228,8 +232,18 @@ def fix_coordinates(user_input: dict) -> dict:
     1e-4, so any location within roughly 11 metres of the equator or the prime
     meridian crashed the options flow (defect C-21).
     """
-    for coordinate in (CONF_LAT_NE, CONF_LAT_SW, CONF_LON_NE, CONF_LON_SW):
-        user_input[coordinate] = normalise_coordinate(float(user_input[coordinate]))
+    # [hardened-fork] Each coordinate is normalised against its own legal
+    # magnitude, so an exact boundary value is nudged inward rather than out of
+    # range - 90.0 used to become 90.0000001 (defect E-006).
+    for coordinate, limit in (
+        (CONF_LAT_NE, LATITUDE_LIMIT),
+        (CONF_LAT_SW, LATITUDE_LIMIT),
+        (CONF_LON_NE, LONGITUDE_LIMIT),
+        (CONF_LON_SW, LONGITUDE_LIMIT),
+    ):
+        user_input[coordinate] = normalise_coordinate(
+            float(user_input[coordinate]), limit
+        )
 
     # Swap coordinates if entered in wrong order
     if user_input[CONF_LAT_NE] < user_input[CONF_LAT_SW]:

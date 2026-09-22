@@ -81,26 +81,29 @@ class NetatmoCover(NetatmoReachabilityEntity, CoverEntity):
     @override
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover."""
-        await self.device.async_close()
+        await self.async_command(self.device.async_close(), "close")
         self._attr_is_closed = True
         self.async_write_ha_state()
 
     @override
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
-        await self.device.async_open()
+        await self.async_command(self.device.async_open(), "open")
         self._attr_is_closed = False
         self.async_write_ha_state()
 
     @override
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
-        await self.device.async_stop()
+        await self.async_command(self.device.async_stop(), "stop")
 
     @override
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover shutter to a specific position."""
-        await self.device.async_set_target_position(kwargs[ATTR_POSITION])
+        await self.async_command(
+            self.device.async_set_target_position(kwargs[ATTR_POSITION]),
+            "set position",
+        )
 
     @callback
     @override

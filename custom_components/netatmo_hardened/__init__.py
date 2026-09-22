@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from typing import Any
 
 from homeassistant.components import cloud
@@ -204,16 +205,33 @@ async def async_config_entry_updated(
     See docs/COMPATIBILITY.md, deprecation D-1.
     """
     data_handler = entry.runtime_data
-    token = entry.data.get("token", {})
-    access_token = token.get("access_token") if isinstance(token, dict) else None
 
-    if access_token and access_token != data_handler.active_access_token:
-        # Credentials changed (reauth completed): the running session is stale.
-        _LOGGER.debug("Netatmo credentials changed; reloading the config entry")
-        hass.config_entries.async_schedule_reload(entry.entry_id)
+    # [hardened-fork] This listener never reloads, and never reacts to token
+    # data (defect E-001).
+    #
+    # 0.1.0 compared the entry's access token against the one the running
+    # handler was built with and scheduled a full reload when they differed,
+    # on the assumption that a changed token meant a completed reauth. It does
+    # not. Home Assistant's OAuth2Session persists every *routine* refresh
+    # through `async_update_entry`, which fires this listener - so with a
+    # Netatmo access token lifetime of about three hours, the integration tore
+    # itself down and rebuilt roughly eight times a day, for ever. That is a
+    # worse availability defect than the deprecation the change was made to
+    # resolve.
+    #
+    # No reload is needed for credentials in any case: OAuth2Session reads
+    # `entry.data["token"]` live, so both a refresh and a completed reauth are
+    # picked up by the running session without restarting anything.
+    #
+    # What this listener is actually for is an options change - the user
+    # adding or editing a public weather area. Those are compared explicitly,
+    # because the public weather signal rebuilds entities and must not fire on
+    # an unrelated token write.
+    if entry.options == data_handler.active_options:
         return
 
-    # Options-only change: let the public weather sensors reconfigure in place.
+    data_handler.active_options = deepcopy(dict(entry.options))
+    _LOGGER.debug("Netatmo options changed; refreshing public weather entities")
     async_dispatcher_send(hass, f"signal-{DOMAIN}-public-update-{entry.entry_id}")
 
 

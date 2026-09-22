@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Awaitable
 from typing import Any, cast, override
 
 from homeassistant.const import EntityStateAttribute
@@ -23,6 +24,7 @@ from .const import (
     SIGNAL_NAME,
 )
 from .coordinator import PUBLIC, NetatmoDataHandler, NetatmoDevice, NetatmoRoom
+from .helper import command_failed
 
 
 class NetatmoBaseEntity(Entity):
@@ -92,6 +94,32 @@ class NetatmoBaseEntity(Entity):
         for publisher in self._publishers:
             await self.data_handler.unsubscribe(
                 publisher[SIGNAL_NAME], self.async_update_callback
+            )
+
+    async def async_command(self, awaitable: Awaitable[Any], action: str) -> None:
+        """Await a pyatmo control call and fail loudly if it was rejected.
+
+        [hardened-fork] pyatmo's control methods return ``bool``; several of
+        them answer ``False`` when the Netatmo API rejects the request rather
+        than raising. Every entity in 0.1.0 awaited such a call and then wrote
+        optimistic state, so a rejected command still showed as ON, OPEN or
+        CLOSED in Home Assistant. Automations keyed on that transition then ran
+        on a state the device had never entered - a silent divergence between
+        the model and the plant, which is the failure class that matters most
+        here (defect E-004).
+
+        Raising ``HomeAssistantError`` surfaces the failure in the UI and in
+        the calling script or automation, and - because it propagates - stops
+        the caller before it writes the optimistic state that follows.
+        """
+        if command_failed(await awaitable):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_rejected",
+                translation_placeholders={
+                    "action": action,
+                    "device": str(getattr(self, "name", None) or "device"),
+                },
             )
 
     @callback

@@ -111,35 +111,43 @@ async def async_get_triggers(
     device_registry = dr.async_get(hass)
     triggers: list[dict[str, str]] = []
 
-    for entry in er.async_entries_for_device(registry, device_id):
-        if (
-            device := device_registry.async_get(device_id, include_child_devices=False)
-        ) is None or device.model is None:
-            continue
+    # [hardened-fork] One trigger per logical device event, not one per entity
+    # (defect E-008).
+    #
+    # Upstream looped over every entity registry entry for the device and
+    # emitted the full trigger set inside that loop. A device with five
+    # entities therefore offered five copies of "thermostat mode changed to
+    # away" in the automation UI, identical except for an entity id that
+    # `async_attach_trigger` never looks at - the runtime filter is built from
+    # trigger type, device id and subtype only. Users picked between options
+    # that were indistinguishable in behaviour.
+    #
+    # A representative entity id is still carried because CONF_ENTITY_ID is
+    # required by TRIGGER_SCHEMA, so existing automations continue to validate.
+    if (
+        device := device_registry.async_get(device_id, include_child_devices=False)
+    ) is None or device.model is None:
+        return triggers
 
-        for trigger in DEVICES.get(device.model, []):
-            if trigger in SUBTYPES:
-                triggers.extend(
-                    {
-                        CONF_PLATFORM: "device",
-                        CONF_DEVICE_ID: device_id,
-                        CONF_DOMAIN: DOMAIN,
-                        CONF_ENTITY_ID: entry.id,
-                        CONF_TYPE: trigger,
-                        CONF_SUBTYPE: subtype,
-                    }
-                    for subtype in SUBTYPES[trigger]
-                )
-            else:
-                triggers.append(
-                    {
-                        CONF_PLATFORM: "device",
-                        CONF_DEVICE_ID: device_id,
-                        CONF_DOMAIN: DOMAIN,
-                        CONF_ENTITY_ID: entry.id,
-                        CONF_TYPE: trigger,
-                    }
-                )
+    entries = er.async_entries_for_device(registry, device_id)
+    if not entries:
+        return triggers
+    representative_entity_id = entries[0].id
+
+    for trigger in DEVICES.get(device.model, []):
+        base = {
+            CONF_PLATFORM: "device",
+            CONF_DEVICE_ID: device_id,
+            CONF_DOMAIN: DOMAIN,
+            CONF_ENTITY_ID: representative_entity_id,
+            CONF_TYPE: trigger,
+        }
+        if trigger in SUBTYPES:
+            triggers.extend(
+                {**base, CONF_SUBTYPE: subtype} for subtype in SUBTYPES[trigger]
+            )
+        else:
+            triggers.append(base)
 
     return triggers
 

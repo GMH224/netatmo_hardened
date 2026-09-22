@@ -4,6 +4,102 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-09-22
+
+**0.1.0 is superseded and should not be deployed.** An independent external
+audit returned a FAIL disposition on it. Nine defects, all verified — and
+**four were introduced by 0.1.0's own remediation**. Two of those are live
+availability defects affecting every installation.
+
+Full analysis: [`docs/AUDIT_0.1.1.md`](docs/AUDIT_0.1.1.md).
+Release record: [`docs/RELEASE_0.1.1.md`](docs/RELEASE_0.1.1.md).
+
+### Fixed — regressions introduced by 0.1.0
+
+- **The integration reloaded itself roughly every three hours** (E-001).
+  0.1.0's fix for the 2026.12 config-entry deprecation compared access tokens
+  in the update listener and reloaded when they changed. But Home Assistant's
+  `OAuth2Session` persists **every routine token refresh** through
+  `async_update_entry`, which fires that listener — and Netatmo tokens last
+  about three hours. The result was a permanent teardown/rebuild cycle roughly
+  eight times a day: entity churn, transient unavailability, webhook
+  re-registration, and reloads racing in-flight commands. A deprecation warning
+  had been traded for a worse availability defect. The listener now compares
+  options and never reloads; no reload is needed for credentials, because
+  `OAuth2Session` reads the token live.
+- **Home Assistant Cloud subscribers got no webhook at all** (E-002). 0.1.0
+  added a `ConfigEntryState.LOADED` guard at the top of webhook registration as
+  a safety measure. But `async_setup_entry` awaits that function directly,
+  while the entry is still `SETUP_IN_PROGRESS` — so it returned immediately,
+  having done nothing. Because the cloud handler only fires on a *change* of
+  connection state, a subscriber whose cloud stayed connected never got a
+  webhook for the lifetime of that runtime. Polling continued, so nothing
+  looked wrong. This is the same silent failure as upstream issue #178195 —
+  the issue cited as a reason this fork exists. Guard removed; the retry
+  callback keeps its own check, which is correct there.
+- **Nested webhook members could override parent identity** (E-003).
+  `{**data, **subevent}` let a sub-event overwrite `home_id` and `device_id`,
+  and the result becomes the Home Assistant event's `device_id` — so a nested
+  member could aim an event at a device it does not belong to. Shape validation
+  cannot catch this: a substituted id naming another real device passes every
+  check. Identity now comes from the parent envelope only. *Re-rated from the
+  audit's HIGH to MEDIUM — reaching this code already requires the webhook id,
+  and a holder can forge a well-formed event directly; reasoning in the audit
+  §4.*
+- **Exact maximum coordinates were pushed out of range** (E-006).
+  `normalise_coordinate(90.0)` returned `90.0000001`, persisted after Home
+  Assistant had already range-validated the input. The nudge is now applied
+  inward at boundaries, and the legal limit is a required argument.
+
+### Fixed — pre-existing defects
+
+- **A rejected command still showed as success** (E-004). pyatmo's control
+  methods return `bool` and answer `False` when Netatmo rejects a request,
+  without raising. Every entity awaited the call and then published the new
+  state, so a failed command still read as ON, OPEN or CLOSED — and any
+  automation keyed on that transition ran on a state the device never entered.
+  Commands now raise `HomeAssistantError` on rejection, before any state write.
+  Room thermostat setpoints return `None` and are deliberately **not** treated
+  as failures: inventing a guarantee the dependency does not offer would be the
+  same error in the opposite direction.
+- **Malformed person events were dispatched anyway** (E-005). The person id was
+  validated and then used regardless, neutralising the check.
+- **Camera timeouts escaped the recoverable-error envelope** (E-007).
+  `TimeoutError` is not an `aiohttp.ClientError`, so a stalled camera raised
+  into Home Assistant instead of returning no image. The stream URL refresh is
+  now wrapped too, falling back to the cached URL.
+- **Device triggers were duplicated per entity** (E-008). A five-entity device
+  offered five identical automation choices, differing only by an entity id the
+  runtime filter ignores.
+- **Control characters were accepted in event types** (E-009), and reached the
+  debug log where they could forge or corrupt records.
+
+### Testing
+
+- 124 tier-1 tests (up from 85), all executed and green.
+- **The test that let E-006 through is corrected.** It already included `90.0`
+  but asserted only `isinstance(result, float)` — that the function did not
+  crash, not that it produced a legal coordinate. It now asserts range across
+  14 inputs. A test that checks the weaker of two available properties is worse
+  than no test.
+- New tier-2 suite `test_lifecycle_regressions.py` covering E-001, E-002,
+  E-004 and E-007 — the cases that would have caught 0.1.0's two worst defects.
+
+### Known limitations
+
+- **The tier-2 suite still has not been executed**, for the same environmental
+  reason as 0.1.0 (Python 3.14.2 unavailable). This is no longer a procedural
+  note: it is the direct cause of E-001 and E-002 reaching release. Do not
+  deploy to an unattended installation until CI has run it green. See
+  `docs/VERIFICATION_REPORT.md` §4.1.
+- Unchanged from 0.1.0: no live-hardware verification, no automated upstream
+  diff, pyatmo held at 9.9.0, pyatmo's own webhook parser not yet adopted.
+
+### Upgrade
+
+Drop-in from 0.1.0 via HACS. No configuration change, no entity change, no
+re-authentication.
+
 ## [0.1.0] - 2026-09-22
 
 First release of the hardened fork under its own version line. Treated as a
@@ -187,4 +283,5 @@ documented with reasoning in `docs/DEFECT_REGISTER.md` §4:
 - pyatmo held at 9.9.0; 9.9.1 exists and is a 0.2.0 task.
 - pyatmo 9.9.0's own webhook parser is not yet adopted; planned for 0.2.0.
 
+[0.1.1]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.0

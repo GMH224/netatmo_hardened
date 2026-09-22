@@ -145,11 +145,12 @@ async def async_handle_webhook(
         collection_key = SUBEVENT_COLLECTION.get(event_name)
         if collection_key is not None:
             for subevent in validate.mapping_members(data.get(collection_key)):
-                # Sub-events inherit the parent's identifiers; Netatmo omits
-                # them on the nested objects.
-                merged = {**data, **subevent}
-                merged.pop(collection_key, None)
-                async_evaluate_event(data_handler, merged)
+                # Identity comes from the parent envelope only; see
+                # validate.merge_subevent for why (defect E-003).
+                async_evaluate_event(
+                    data_handler,
+                    validate.merge_subevent(data, subevent, collection_key),
+                )
         return
 
     async_evaluate_event(data_handler, data)
@@ -179,8 +180,18 @@ def async_evaluate_event(
     home_persons = data_handler.persons[event_data[ATTR_HOME_ID]]
 
     for person in validate.mapping_members(event_data.get(ATTR_PERSONS)):
-        person_event_data = dict(event_data)
         person_id = validate.identifier(person, ATTR_ID)
+        if person_id is None:
+            # [hardened-fork] A person event without a person is not a person
+            # event. Validating the id and then dispatching anyway neutralised
+            # the check: the resulting Home Assistant event still carried a
+            # real event type and device id, so an automation keyed on those
+            # rather than on the person would fire on malformed data
+            # (defect E-005).
+            _LOGGER.debug("Discarding person event member without an id")
+            continue
+
+        person_event_data = dict(event_data)
         person_event_data[ATTR_ID] = person_id
         person_event_data[ATTR_NAME] = home_persons.get(person_id, DEFAULT_PERSON)
         person_event_data[ATTR_IS_KNOWN] = person.get(ATTR_IS_KNOWN)
@@ -275,9 +286,21 @@ async def async_register_webhook(
     retried only the last of those, so a transient cloudhook failure bypassed
     the recovery this fork exists to provide (defect C-6).
     """
-    if entry.state is not ConfigEntryState.LOADED:
-        return
-
+    # [hardened-fork] Deliberately NOT gated on ConfigEntryState.LOADED.
+    #
+    # 0.1.0 had such a guard here, which broke the only startup path that
+    # registers a webhook for a Home Assistant Cloud subscriber:
+    # async_setup_entry() awaits this function directly, and at that moment the
+    # entry is still SETUP_IN_PROGRESS, so the guard returned before
+    # registering anything. manage_cloudhook only fires on a *change* of cloud
+    # connection state, so a subscriber whose cloud stayed connected never got
+    # a webhook at all for the lifetime of that runtime - silently, which is
+    # the exact failure this fork exists to prevent (defect E-002).
+    #
+    # The lifecycle protection that actually matters lives elsewhere and is
+    # unaffected: the scheduled retry checks LOADED before re-entering (a retry
+    # firing later genuinely must not act on a dead entry), and unload cancels
+    # any pending retry outright.
     data_handler = entry.runtime_data
     async_cancel_webhook_retry(entry)
 

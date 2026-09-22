@@ -73,7 +73,10 @@ class NetatmoFan(NetatmoReachabilityEntity, FanEntity):
     @override
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the preset mode of the fan."""
-        await self.device.async_set_fan_speed(PRESET_MAPPING[preset_mode])
+        await self.async_command(
+            self.device.async_set_fan_speed(PRESET_MAPPING[preset_mode]),
+            "set preset mode",
+        )
 
     @callback
     @override

@@ -48,14 +48,46 @@ calls/hour** budget instead of Cloud's 150, and the integration polls roughly
 `coordinator.py`). Data is fresher and recovery after an outage is faster. The
 cost is a five-minute one-time setup.
 
-### Creating Netatmo application credentials
+### What "application credentials" actually are
 
-1. Sign in at <https://dev.netatmo.com/apps/createanapp> and create an app.
-2. Set the redirect URI to
-   `https://my.home-assistant.io/redirect/oauth`
-3. Copy the **client ID** and **client secret**.
-4. In Home Assistant: **Settings → Devices & services → ⋮ → Application
-   credentials → Add credential**, choose **Netatmo (hardened)**, and paste them.
+Netatmo's API uses OAuth2. Two separate identities are involved:
+
+* **The application** — proves *which program* is asking. This is the client ID
+  and client secret, issued by Netatmo when you register an app.
+* **You** — proves *whose data* it may read. This happens later, when you log in
+  to Netatmo and approve the request.
+
+Application credentials are the first of those. They are the integration's
+identity, not your account password.
+
+With the built-in integration you never see this step, because Nabu Casa
+registered an application with Netatmo and Home Assistant Cloud lends you its
+credentials. That registration is tied to the `netatmo` domain, so an
+independently-domained integration cannot use it. You register your own instead
+— once, in about five minutes.
+
+### Creating them
+
+1. Go to <https://dev.netatmo.com/apps/createanapp> and sign in with your
+   **normal Netatmo account** (the same one your devices are on — you do not
+   need a separate developer account).
+2. Create an app. Give it any name and description, e.g. "Home Assistant".
+3. **Leave the redirect URI and the webhook URI blank.** Home Assistant supplies
+   both at runtime, and filling them in here can break the OAuth callback. The
+   webhook URL is derived from your Home Assistant external URL, so make sure
+   that is configured correctly under **Settings → System → Network**.
+4. Save, then copy the **Client ID** and **Client secret**.
+5. Enter them in Home Assistant. Either:
+   * let the config flow ask you — **Settings → Devices & services → + Add
+     integration → Netatmo (hardened)** prompts for them the first time; or
+   * add them up front — **Settings → Devices & services → ⋮ (top right) →
+     Application credentials → Add credential**, pick **Netatmo (hardened)**,
+     paste both, and give the credential a name.
+6. Complete the OAuth flow: you are sent to Netatmo, you log in, you approve the
+   requested permissions, and you are returned to Home Assistant.
+
+You only do this once. The credentials persist across restarts, upgrades and
+re-authentications.
 
 ---
 
@@ -72,6 +104,13 @@ will keep the suffix.
 
 ### Procedure
 
+Install first, delete second, configure third. Doing it in that order keeps the
+window in which you have no Netatmo integration down to a few minutes, because
+installing the custom integration changes nothing until you configure it.
+
+0. **Create your Netatmo developer application** (see above) and have the
+   client ID and secret to hand before you start.
+
 1. **Record your current entity IDs.**
    Developer tools → Template, and run:
 
@@ -85,14 +124,18 @@ will keep the suffix.
 2. **Back up.** Settings → System → Backups → Create backup. Do not skip this;
    step 3 is destructive.
 
-3. **Remove the built-in Netatmo integration.**
+3. **Install `netatmo_hardened`** via HACS and restart Home Assistant.
+   Nothing changes yet — an installed but unconfigured integration is inert.
+
+4. **Delete the built-in Netatmo integration.**
    Settings → Devices & services → Netatmo → ⋮ → **Delete**.
-   This deletes its entities from the registry and frees their entity IDs.
+   This removes its entities from the registry and frees their entity IDs.
+   Delete, do not disable — see below for why.
 
-4. **Install `netatmo_hardened`** via HACS and restart Home Assistant.
-
-5. **Add your application credentials and configure the integration**
-   (see above), then complete the Netatmo OAuth flow.
+5. **Add your application credentials**
+   (Settings → Devices & services → ⋮ → Application credentials → Add
+   credential → **Netatmo (hardened)**), then **Add integration → Netatmo
+   (hardened)** and complete the Netatmo OAuth flow.
 
 6. **Verify.** Re-run the template from step 1 and compare. Entity IDs should
    match your saved list. Check that history for one long-lived sensor still
@@ -121,10 +164,28 @@ start getting throttled (HTTP 429). Netatmo also permits only one active
 webhook per account, so whichever registers last wins and the other silently
 stops receiving push events.
 
-If you want a fallback configured but idle, **disable** the built-in Netatmo
-config entry rather than deleting it: Settings → Devices & services → Netatmo →
-⋮ → Disable. A disabled entry does not poll and does not consume rate budget,
-but can be re-enabled in seconds if you need to fall back.
+### Do not "disable" the old entry instead of deleting it
+
+It is tempting to disable the built-in Netatmo config entry rather than delete
+it, to keep a fallback ready. **Do not do this if you want your entity IDs
+preserved.**
+
+A disabled config entry keeps its entities in the entity registry. The registry
+is what reserves an entity ID, so `climate.living_room` remains taken and the
+new integration's equivalent comes up as `climate.living_room_2`. You then have
+to repoint every automation and dashboard card — exactly the outcome the
+cut-over above exists to avoid.
+
+Deleting costs you nothing in fallback terms. The built-in `netatmo`
+integration ships with Home Assistant; deleting your *configuration* of it does
+not remove the integration itself. You can re-add it from
+**Settings → Devices & services → Add integration** at any time, in about two
+minutes. The fallback is the integration being present in Home Assistant, not
+a stale config entry sitting disabled.
+
+Disabling is only the right move in one case: you want both configured
+temporarily during a cautious cut-over and you are willing to live with
+suffixed entity IDs on the new integration while both exist.
 
 ---
 

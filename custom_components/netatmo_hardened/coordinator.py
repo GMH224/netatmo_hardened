@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import islice
@@ -238,14 +239,10 @@ class NetatmoDataHandler:
         self.webhook_stop_listener: CALLBACK_TYPE | None = None
         self.webhook_retry_cancel: CALLBACK_TYPE | None = None
         self._reauth_started = False
-        # [hardened-fork] Snapshot of the access token this handler was built
-        # with, so the update listener can tell a credential change (reload
-        # required) from an options change (no reload). See D-1 in
-        # docs/COMPATIBILITY.md.
-        token = config_entry.data.get("token", {})
-        self.active_access_token: str | None = (
-            token.get("access_token") if isinstance(token, dict) else None
-        )
+        # [hardened-fork] Snapshot of the options this handler was built with,
+        # so the update listener can tell a real options change from the
+        # routine OAuth token writes that also fire it (defect E-001).
+        self.active_options: dict[str, Any] = deepcopy(dict(config_entry.options))
 
     @property
     def _watchdog_reloads(self) -> int:

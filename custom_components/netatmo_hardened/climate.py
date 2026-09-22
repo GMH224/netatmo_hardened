@@ -409,7 +409,13 @@ class NetatmoThermostat(NetatmoRoomEntity, ClimateEntity):
         elif preset_mode in (PRESET_BOOST, STATE_NETATMO_MAX):
             await self.device.async_therm_set(PRESET_MAP_NETATMO[preset_mode])
         elif preset_mode in THERM_MODES:
-            await self.device.home.async_set_thermmode(PRESET_MAP_NETATMO[preset_mode])
+            # [hardened-fork] Home-level mode changes report success; room-level
+            # async_therm_set/_manual/_home return None and give no indication,
+            # so this integration must not fabricate one for them (defect E-004).
+            await self.async_command(
+                self.device.home.async_set_thermmode(PRESET_MAP_NETATMO[preset_mode]),
+                "set preset mode",
+            )
         else:
             _LOGGER.error("Preset mode '%s' not available", preset_mode)
 
@@ -555,7 +561,9 @@ class NetatmoThermostat(NetatmoRoomEntity, ClimateEntity):
             _LOGGER.error("%s is not a valid schedule", kwargs.get(ATTR_SCHEDULE_NAME))
             return
 
-        await self.home.async_switch_schedule(schedule_id=schedule_id)
+        await self.async_command(
+            self.home.async_switch_schedule(schedule_id=schedule_id), "set schedule"
+        )
         _LOGGER.debug(
             "Setting %s schedule to %s (%s)",
             self.home.entity_id,
@@ -570,8 +578,11 @@ class NetatmoThermostat(NetatmoRoomEntity, ClimateEntity):
         end_datetime = kwargs[ATTR_END_DATETIME]
         end_timestamp = int(dt_util.as_timestamp(end_datetime))
 
-        await self.home.async_set_thermmode(
-            mode=PRESET_MAP_NETATMO[preset_mode], end_time=end_timestamp
+        await self.async_command(
+            self.home.async_set_thermmode(
+                mode=PRESET_MAP_NETATMO[preset_mode], end_time=end_timestamp
+            ),
+            "set preset mode with end time",
         )
         _LOGGER.debug(
             "Setting %s preset to %s with end datetime %s",

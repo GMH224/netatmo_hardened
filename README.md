@@ -15,7 +15,7 @@ fallback**: if this fork ever breaks on an upgrade, disable it and the built-in
 integration takes over. A fork that shadows the core domain masks it, so a
 breakage takes Netatmo out entirely.
 
-**Version 0.1.0** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
+**Version 0.1.1** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
 
 ---
 
@@ -78,8 +78,12 @@ traced to its fix and test.
 
 **Home Assistant Cloud account linking is not available.** Cloud's Netatmo
 linking is registered by Nabu Casa for the `netatmo` domain specifically, so a
-custom domain cannot use it. You create your own Netatmo developer application
-instead — a five-minute, one-time step.
+custom domain cannot use it. You register your own Netatmo application instead
+— a five-minute, one-time step at
+[dev.netatmo.com](https://dev.netatmo.com/apps/createanapp), using your normal
+Netatmo account. **Leave the redirect URI and webhook URI blank**; Home
+Assistant supplies both. Full walkthrough in
+[`docs/MIGRATION.md`](docs/MIGRATION.md).
 
 This is mostly an upside: own-application credentials carry a **400 calls/hour**
 budget instead of Cloud's 150, so the integration polls roughly 3.5× more
@@ -111,9 +115,10 @@ automations:
 | Document | Contents |
 | --- | --- |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in 0.1.0 and why |
-| [`docs/RELEASE_0.1.0.md`](docs/RELEASE_0.1.0.md) | Release record, contents, acceptance criteria |
+| [`docs/RELEASE_0.1.1.md`](docs/RELEASE_0.1.1.md) | Release record, 0.1.1 |
 | [`docs/DEFECT_REGISTER.md`](docs/DEFECT_REGISTER.md) | Every defect → fix → test, plus rejected recommendations |
-| [`docs/AUDIT.md`](docs/AUDIT.md) | Audit method, findings, and validation of the external report |
+| [`docs/AUDIT_0.1.1.md`](docs/AUDIT_0.1.1.md) | **External independent audit of 0.1.0** and its remediation |
+| [`docs/AUDIT_0.1.0.md`](docs/AUDIT_0.1.0.md) | Internal audit that produced 0.1.0 |
 | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | Test objectives and coverage map |
 | [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) | **What was and was not executed before release** |
 | [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) | Platform baseline and the 2026 deprecation sweep |
@@ -147,8 +152,11 @@ a Home Assistant runtime.
 
 Stated plainly rather than omitted:
 
-- Tier 2 integration tests are authored but **had not been executed** at the
-  time of tagging 0.1.0. See [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) §4.
+- Tier 2 integration tests are authored but **still have not been executed**.
+  This is not a formality: it is the direct cause of the two availability
+  regressions that 0.1.1 fixes. Do not deploy to an unattended installation
+  until CI has run them green. See
+  [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) §4.
 - No live deployment against real Netatmo hardware was performed.
 - No automated diff against the upstream core integration; drift review is
   manual.

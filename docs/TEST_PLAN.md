@@ -1,6 +1,6 @@
 # Test Plan
 
-**Release:** 0.1.0
+**Release:** 0.1.1
 **Baseline:** Home Assistant 2026.9 · Python 3.14.2 · pyatmo 9.9.0
 
 ## 1. Strategy
@@ -41,6 +41,13 @@ testable, not a cosmetic refactor.
 | C-15 | Partial scopes degrade, no scopes is fatal | 2 | `test_partial_scopes_raise_a_repair_issue_but_still_set_up`, `test_token_with_no_usable_scope_is_fatal` |
 | P0-1 | Package imports on the declared floor | CI | job `import-floor`, tier 2 HA matrix |
 | C-16 | No assertions in production code | Static | `ruff check --select S101` |
+| **E-001** | Token refresh never reloads; options change still refreshes | 2 | `test_token_refresh_does_not_reload`, `test_repeated_token_refresh_never_reloads`, `test_options_change_still_refreshes_public_weather`, `test_token_refresh_does_not_churn_public_weather` |
+| **E-002** | Webhook registers during setup for a cloud subscriber | 2 | `test_webhook_registers_during_setup_with_active_cloud`, `test_registration_is_not_gated_on_loaded_state` |
+| **E-003** | Nested members cannot alter parent identity | 1 | 9 tests in `test_identity_protection.py` |
+| **E-004** | `False` never becomes success; `None` never becomes failure | 1 + 2 | `test_only_explicit_false_counts_as_command_failure` (6 cases) + 4 tier-2 tests |
+| **E-006** | Normalised coordinates stay in range at every boundary | 1 | `test_normalised_coordinate_stays_in_range` (14 coords), `test_exact_maximum_is_nudged_inward` |
+| **E-007** | Camera timeouts are absorbed on both media paths | 2 | `test_camera_snapshot_timeout_is_absorbed`, `test_camera_url_refresh_timeout_is_absorbed` |
+| **E-009** | Control characters rejected before reaching logs | 1 | 8 cases + `test_rejected_event_type_cannot_reach_the_log_summary` |
 | C-17 | No direct mapping index on device types | Static + review | `ruff`, manual |
 
 ## 3. Adversarial payload corpus
@@ -90,7 +97,12 @@ the declared floor.
 4. `docs/VERIFICATION_REPORT.md` updated with the actual results.
 5. Every P0 and every C-defect rated High has an executed test.
 
-> **0.1.0 does not meet exit criterion 2.** It was tagged with tier 2 authored
+> **Neither 0.1.0 nor 0.1.1 meets exit criterion 2**, for the same reason. In
+> 0.1.0 that was an accepted procedural deviation; after the external audit it
+> is understood as causal — E-001 and E-002 are precisely what tier 2
+> exercises. See `AUDIT_0.1.1.md` §6.
+>
+> **0.1.0 did not meet exit criterion 2.** It was tagged with tier 2 authored
 > but unexecuted, for the reason given in `VERIFICATION_REPORT.md` §4.1. This
 > is a recorded, accepted deviation — not an omission — and 0.2.0 is blocked on
 > clearing it.

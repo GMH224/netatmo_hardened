@@ -139,13 +139,13 @@ class NetatmoCameraLight(NetatmoModuleEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn camera floodlight on."""
         _LOGGER.debug("Turn camera '%s' on", self.name)
-        await self.device.async_floodlight_on()
+        await self.async_command(self.device.async_floodlight_on(), "turn on")
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn camera floodlight into auto mode."""
         _LOGGER.debug("Turn camera '%s' to auto mode", self.name)
-        await self.device.async_floodlight_auto()
+        await self.async_command(self.device.async_floodlight_auto(), "set auto")
 
     @callback
     @override
@@ -189,13 +189,14 @@ class NetatmoLight(NetatmoReachabilityEntity, LightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn light on."""
         if ATTR_BRIGHTNESS in kwargs:
-            await self.device.async_set_brightness(
-                round(kwargs[ATTR_BRIGHTNESS] / 2.55)
+            await self.async_command(
+                self.device.async_set_brightness(round(kwargs[ATTR_BRIGHTNESS] / 2.55)),
+                "set brightness",
             )
             self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
 
         else:
-            await self.device.async_on()
+            await self.async_command(self.device.async_on(), "turn on")
 
         self._attr_is_on = True
         self.async_write_ha_state()
@@ -203,7 +204,7 @@ class NetatmoLight(NetatmoReachabilityEntity, LightEntity):
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn light off."""
-        await self.device.async_off()
+        await self.async_command(self.device.async_off(), "turn off")
         self._attr_is_on = False
         self.async_write_ha_state()
 

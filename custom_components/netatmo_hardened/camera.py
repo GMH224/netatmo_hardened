@@ -50,6 +50,19 @@ PARALLEL_UPDATES = 0
 
 DEFAULT_QUALITY = "high"
 
+# [hardened-fork] Recoverable transport failures for camera media.
+#
+# TimeoutError is the addition that matters (defect E-007). pyatmo's image
+# request carries a finite HTTP timeout, and a camera or WAN path that accepts
+# the connection but stalls raises asyncio.TimeoutError - which is TimeoutError
+# on Python 3.11+ and is NOT an aiohttp.ClientError, so it escaped the old
+# tuple entirely. aiohttp.ClientError replaces the three specific subclasses
+# previously listed, which missed siblings such as ServerTimeoutError.
+CAMERA_TRANSPORT_ERRORS: tuple[type[Exception], ...] = (
+    TimeoutError,
+    aiohttp.ClientError,
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -221,13 +234,7 @@ class NetatmoCamera(NetatmoModuleEntity, Camera):
         """Return a still image response from the camera."""
         try:
             return cast(bytes, await self.device.async_get_live_snapshot())
-        except (
-            aiohttp.ClientPayloadError,
-            aiohttp.ContentTypeError,
-            aiohttp.ServerDisconnectedError,
-            aiohttp.ClientConnectorError,
-            NetatmoApiError,
-        ) as err:
+        except (*CAMERA_TRANSPORT_ERRORS, NetatmoApiError) as err:
             _LOGGER.debug("Could not fetch live camera image (%s)", err)
         return None
 
@@ -258,18 +265,27 @@ class NetatmoCamera(NetatmoModuleEntity, Camera):
     @override
     async def async_turn_off(self) -> None:
         """Turn off camera."""
-        await self.device.async_monitoring_off()
+        await self.async_command(self.device.async_monitoring_off(), "turn off")
 
     @override
     async def async_turn_on(self) -> None:
         """Turn on camera."""
-        await self.device.async_monitoring_on()
+        await self.async_command(self.device.async_monitoring_on(), "turn on")
 
     @override
     async def stream_source(self) -> str:
-        """Return the stream source."""
+        """Return the stream source.
+
+        [hardened-fork] The URL refresh is a network call and is wrapped like
+        any other. A stalled local camera used to let a timeout escape into
+        Home Assistant's stream machinery (defect E-007); the cached URL is a
+        better answer than a traceback.
+        """
         if self.device.is_local:
-            await self.device.async_update_camera_urls()
+            try:
+                await self.device.async_update_camera_urls()
+            except (*CAMERA_TRANSPORT_ERRORS, NetatmoApiError) as err:
+                _LOGGER.debug("Could not refresh camera URLs (%s)", err)
 
         if self.device.local_url:
             return f"{self.device.local_url}/live/files/{self._quality}/index.m3u8"
@@ -367,4 +383,6 @@ class NetatmoCamera(NetatmoModuleEntity, Camera):
 
         mode = str(kwargs.get(ATTR_CAMERA_LIGHT_MODE))
         _LOGGER.debug("Turn %s camera light for '%s'", mode, self._attr_name)
-        await self.device.async_set_floodlight_state(mode)
+        await self.async_command(
+            self.device.async_set_floodlight_state(mode), f"set floodlight {mode}"
+        )

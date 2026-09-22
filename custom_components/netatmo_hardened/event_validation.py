@@ -36,6 +36,27 @@ MAX_COLLECTION_ITEMS: Final = 256
 # MAC addresses or 24-character hex strings; anything longer is malformed.
 MAX_IDENTIFIER_LENGTH: Final = 128
 
+# C0 controls, DEL, and the C1 range. Rejected in identifiers so that an
+# externally supplied value cannot forge or corrupt a log line (defect E-009).
+CONTROL_CHARACTERS: Final = frozenset(
+    chr(code) for code in [*range(0x00, 0x20), 0x7F, *range(0x80, 0xA0)]
+)
+
+# The key naming an event's type in a Netatmo payload.
+EVENT_TYPE_KEY: Final = "event_type"
+
+# Fields that establish *which* home, device, room or module an event concerns.
+# These are taken from the authenticated parent envelope and may never be
+# supplied or altered by a nested member (defect E-003).
+PROTECTED_IDENTITY_FIELDS: Final = (
+    "home_id",
+    "device_id",
+    "camera_id",
+    "room_id",
+    "module_id",
+    "user_id",
+)
+
 
 def as_mapping(payload: Any) -> dict[str, Any] | None:
     """Return the payload when it is a JSON object, otherwise ``None``.
@@ -68,16 +89,74 @@ def mapping_members(
 def identifier(data: Mapping[str, Any], key: str) -> str | None:
     """Return ``data[key]`` when it is a usable identifier string, else ``None``.
 
-    Rejects missing keys, non-strings, empty strings and absurd lengths. Used
-    before any value is applied as a dictionary key or compared against a
-    Netatmo entity id.
+    Rejects missing keys, non-strings, empty strings, absurd lengths and any
+    value containing control characters.
+
+    [hardened-fork] The control-character rule closes defect E-009. An
+    identifier-shaped value reaches the debug log through
+    :func:`redacted_summary`, and a value carrying CR, LF or terminal escape
+    sequences can forge or corrupt log lines - which matters precisely because
+    these logs are the forensic record for an externally reachable endpoint.
+    No legitimate Netatmo identifier or event name contains one.
     """
     value = data.get(key)
     if not isinstance(value, str):
         return None
     if not value or len(value) > MAX_IDENTIFIER_LENGTH:
         return None
+    if any(ch in CONTROL_CHARACTERS for ch in value):
+        return None
     return value
+
+
+def merge_subevent(
+    parent: Mapping[str, Any],
+    subevent: Mapping[str, Any],
+    collection_key: str,
+) -> dict[str, Any]:
+    """Combine a nested sub-event with its parent, keeping parent identity.
+
+    Netatmo omits the home and device identifiers on nested sub-event objects,
+    so they must be inherited from the parent envelope. The obvious way to do
+    that - ``{**parent, **subevent}`` - inherits them but also lets the nested
+    member *overwrite* them, which is the wrong direction across a trust
+    boundary (defect E-003).
+
+    A payload such as::
+
+        {"event_type": "outdoor", "home_id": "A", "device_id": "CAM-A",
+         "subevents": [{"type": "human", "home_id": "B", "device_id": "CAM-B"}]}
+
+    would emit an event attributed to ``CAM-B``. Since the resulting device id
+    becomes the Home Assistant event's ``device_id``, a nested member could
+    steer an event at a device it does not belong to, and any automation keyed
+    on that device would act on it. Validation alone does not catch this: a
+    substituted identifier that happens to name another real device passes
+    every shape and existence check.
+
+    Identity therefore comes from the parent and only from the parent. The
+    sub-event contributes its own descriptive fields, plus its ``type``, which
+    names the event - this is how an ``outdoor`` envelope produces the
+    ``human`` / ``animal`` / ``vehicle`` events that the outdoor camera's
+    device triggers listen for.
+    """
+    merged: dict[str, Any] = {**parent, **subevent}
+
+    # Parent identity is immutable for nested processing.
+    for key in PROTECTED_IDENTITY_FIELDS:
+        if key in parent:
+            merged[key] = parent[key]
+        else:
+            merged.pop(key, None)
+
+    # The collection itself must not travel inside its own members.
+    merged.pop(collection_key, None)
+
+    # A sub-event's own `type` names the event it becomes.
+    if (nested_type := identifier(subevent, "type")) is not None:
+        merged[EVENT_TYPE_KEY] = nested_type
+
+    return merged
 
 
 def event_type(data: Mapping[str, Any], key: str) -> str | None:

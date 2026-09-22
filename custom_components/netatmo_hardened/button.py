@@ -76,4 +76,7 @@ class NetatmoCoverPreferredPositionButton(NetatmoReachabilityEntity, ButtonEntit
     async def async_press(self) -> None:
         """Handle button press to move the cover to a preferred position."""
         _LOGGER.debug("Moving %s to a preferred position", self.device.entity_id)
-        await self.device.async_move_to_preferred_position()
+        await self.async_command(
+            self.device.async_move_to_preferred_position(),
+            "move to preferred position",
+        )

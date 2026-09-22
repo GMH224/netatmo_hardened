@@ -64,9 +64,11 @@ rules:
   test-coverage:
     status: partial
     comment: >-
-      Two-tier suite added in 0.1.0. Tier 1 (tests/unit/) is executed and green.
-      Tier 2 (tests/integration/) requires a Home Assistant runtime and is
-      executed in CI only. See docs/VERIFICATION_REPORT.md.
+      Two-tier suite. Tier 1 (tests/unit/) is executed and green: 124 tests.
+      Tier 2 (tests/integration/) requires a Home Assistant runtime and has
+      NOT yet been executed - see docs/VERIFICATION_REPORT.md section 4.1.
+      That gap is the direct cause of the E-001/E-002 regressions fixed in
+      0.1.1 and is stated here rather than rounded up to `done`.
 
   # Gold
   devices: done

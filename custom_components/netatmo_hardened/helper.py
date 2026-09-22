@@ -115,24 +115,69 @@ def build_event_index(
     return index
 
 
-def normalise_coordinate(value: float, minimum_precision: int = 7) -> float:
-    """Return a coordinate the Netatmo API accepts, without string parsing.
+def normalise_coordinate(
+    value: float, limit: float, minimum_precision: int = 7
+) -> float:
+    """Return a coordinate the Netatmo API accepts, without leaving its domain.
 
-    The API rejects coordinates carrying too few decimal places, so upstream
-    nudged them by 1e-7. It decided whether to nudge with
+    The API rejects coordinates carrying too few decimal places, so a value
+    that is already exact to fewer than ``minimum_precision`` digits is nudged
+    by one unit of the last place.
+
+    Two defects are fixed here.
+
+    ``C-21``: upstream decided whether to nudge with
     ``len(str(value).split(".")[1])``, which raises ``IndexError`` whenever
     Python renders the float in scientific notation - true for any magnitude
     below 1e-4, i.e. any location within roughly 11 metres of the equator or
     the prime meridian. The options flow crashed rather than saving the area.
+    Precision is now compared numerically, with no string dependency.
 
-    This compares the value against its own rounding instead, which has no
-    string representation dependency at all.
+    ``E-006``: the nudge was unconditionally *additive*, so an exact maximum
+    boundary was pushed outside the legal range - ``90.0`` became
+    ``90.0000001`` and ``180.0`` became ``180.0000001``. Home Assistant had
+    already range-validated the user's input by that point, so the invalid
+    value was persisted without complaint. The nudge is now applied inward
+    whenever moving outward would leave ``[-limit, +limit]``.
 
-    Addresses defect C-21 (external finding SEC-009).
+    ``limit`` is the coordinate's legal magnitude: 90 for latitude, 180 for
+    longitude. It is required rather than defaulted, so a caller cannot get
+    the bound wrong by omission.
     """
-    if round(value, minimum_precision - 1) == value:
-        return value + 10**-minimum_precision
-    return value
+    if round(value, minimum_precision - 1) != value:
+        # Already carries enough precision; leave it exactly as given.
+        return value
+
+    epsilon = 10**-minimum_precision
+    candidate = value + epsilon
+    if abs(candidate) > limit:
+        # Nudging outward would leave the legal domain; nudge inward instead.
+        candidate = value - epsilon
+    return candidate
+
+
+def command_failed(result: Any) -> bool:
+    """Return whether a pyatmo control call reported failure.
+
+    [hardened-fork] pyatmo's control methods - ``async_on``, ``async_off``,
+    ``async_open``, ``async_close``, ``async_set_state``, ``async_monitoring_on``
+    and others - are annotated ``-> bool`` and answer ``False`` when the
+    Netatmo API rejects the request. They do **not** raise for an
+    application-level rejection: ``Home.async_set_state`` returns ``False``
+    when the response body carries errors, and otherwise returns
+    ``status == "ok"``.
+
+    Awaiting such a call therefore means "the request completed", not "the
+    device did what you asked". Every entity in this integration used to
+    publish optimistic state immediately after the await, so a rejected
+    command still showed as ON, OPEN or CLOSED in Home Assistant, and any
+    automation watching that state ran on a transition that never happened on
+    the device (defect E-004).
+
+    Only an explicit ``False`` counts as failure. Methods that return ``None``
+    give no success indication, and this must not invent one for them.
+    """
+    return result is False
 
 
 @dataclass

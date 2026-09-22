@@ -1,6 +1,6 @@
 # Verification Report
 
-**Release:** 0.1.0
+**Release:** 0.1.1
 **Date:** 2026-09-22
 **Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
 
@@ -20,7 +20,7 @@ archive at all; that is the failure mode this document exists to prevent.
 | Static syntax check, all modules | Pass | ✅ Yes |
 | `ruff check` (F, E, W, B, S, ASYNC, RUF, UP, I) | **All checks passed** | ✅ Yes |
 | `ruff format --check` | 31 files already formatted | ✅ Yes |
-| Tier 1 test suite (pure logic) | **85 passed, 0 failed** | ✅ Yes |
+| Tier 1 test suite (pure logic) | **124 passed, 0 failed** | ✅ Yes |
 | Tier 2 test suite (integration) | Authored, not executed here | ❌ **No — see §4** |
 | `hassfest` manifest validation | Configured in CI | ❌ Not executed here |
 | HACS validation | Configured in CI | ❌ Not executed here |
@@ -56,13 +56,14 @@ Two results are worth calling out specifically:
 
 ```
 $ python -m pytest tests/unit
-85 passed in 0.06s
+124 passed in 0.09s
 ```
 
 | File | Tests | Covers |
 | --- | --- | --- |
-| `test_control_integrity.py` | 30 | C-1, C-2, C-19, C-21 |
+| `test_control_integrity.py` | 52 | C-1, C-2, C-19, C-21, **E-004**, **E-006** |
 | `test_event_validation.py` | 55 | C-8, C-9, C-11, C-18 |
+| `test_identity_protection.py` | 17 | **E-003**, **E-009** |
 
 These are executed on the authoring environment's Python 3.11 and in CI on
 3.11 / 3.12 / 3.13 / 3.14. That portability is deliberate: the arithmetic
@@ -70,7 +71,15 @@ deciding how long a heating override lasts, and the validation deciding whether
 a hostile webhook payload is accepted, should be verifiable without standing up
 a smart-home platform first.
 
-**Notable result.** One test failed on first run —
+**Notable result (0.1.1).** The coordinate test that let **E-006** through is
+corrected. In 0.1.0 it included `90.0` in its parameters but asserted only
+`isinstance(result, float)` — that the function did not crash, not that it
+produced a legal coordinate. It now asserts the value lies within the
+coordinate's legal domain, across 14 inputs including every boundary. A test
+that checks the weaker of two available properties is worse than no test,
+because it converts an unknown into documented confidence.
+
+**Notable result (0.1.0).** One test failed on first run —
 `test_coordinate_normalisation_reproduces_old_crash` — and the failure was in
 the *test*, not the fix: `1e-7` already carries seven decimal places, so the
 correct behaviour is to leave it untouched. The test was corrected and a
@@ -107,7 +116,13 @@ trust:
 
 ### 4.1 Tier 2 integration tests
 
-**Not executed in the authoring environment.**
+**Not executed in the authoring environment — and this deviation is now known
+to be causal, not procedural.**
+
+E-001 and E-002, the two live availability defects that made 0.1.1 necessary,
+are exactly what this tier exercises: lifecycle wiring rather than helper
+logic. The deviation recorded for 0.1.0 was not paperwork. It was the hole, and
+two defects went straight through it.
 
 Home Assistant 2026.9.3 requires Python ≥ 3.14.2. The only CPython 3.14 build
 obtainable in the build container was **3.14.0rc2**, and the dependency
@@ -168,8 +183,9 @@ was run locally.
 
 ## 6. Release recommendation
 
-**Fit for release as 0.1.0**, with the residual risk in §4 accepted and
-recorded.
+**Fit for release as 0.1.1**, with the residual risk in §4 accepted and
+recorded — and with the explicit qualification that the same residual risk
+produced the defects this release fixes.
 
 The four release-blocking packaging defects are fixed and statically verified.
 The two highest-consequence control-integrity defects — C-1 (truncated
