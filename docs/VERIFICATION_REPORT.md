@@ -1,6 +1,6 @@
 # Verification Report
 
-**Release:** 0.1.2
+**Release:** 0.1.3
 **Date:** 2026-09-22
 **Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
 
@@ -19,8 +19,9 @@ archive at all; that is the failure mode this document exists to prevent.
 | --- | --- | --- |
 | Static syntax check, all modules | Pass | ✅ Yes |
 | `ruff check` (F, E, W, B, S, ASYNC, RUF, UP, I) | **All checks passed** | ✅ Yes |
-| `ruff format --check` | 36 files already formatted | ✅ Yes |
-| Tier 1 test suite (pure logic) | **159 passed, 0 failed** | ✅ Yes |
+| `ruff format --check` | 39 files already formatted | ✅ Yes |
+| **Explicit compile of every `.py` file** | **39 files, 0 syntax errors** | ✅ Yes — **new gate, see §2.1a** |
+| Tier 1 test suite (pure logic) | **219 passed, 0 failed** | ✅ Yes |
 | Tier 2 test suite (integration) | Authored, not executed here | ❌ **No — see §4** |
 | `hassfest` manifest validation | Configured in CI | ❌ Not executed here |
 | HACS validation | Configured in CI | ❌ Not executed here |
@@ -39,7 +40,7 @@ $ ruff check custom_components tests
 All checks passed!
 
 $ ruff format --check custom_components tests
-36 files already formatted
+39 files already formatted
 ```
 
 Two results are worth calling out specifically:
@@ -53,11 +54,33 @@ Two results are worth calling out specifically:
 * **`S101` (assert) is clean across `custom_components/`.** Defect C-16 is
   verified by absence: there are no assertions left in production code.
 
+### 2.1a Compile gate (executed) — new in 0.1.3
+
+```
+$ python3.13 -c "compile every .py in the repository"
+compile gate: 39 files, 0 errors
+```
+
+**This gate exists because `ruff check` was shown to be insufficient.** The
+`ruff 0.15.11` binary in this build environment rewrites `except (A, B):` into
+`except A, B:` — Python 2 syntax, a hard `SyntaxError` — and then reports
+**"All checks passed!"** on the file it corrupted. Reproduced on a minimal
+six-line case; full analysis in `AUDIT_0.1.3.md` §5.
+
+No shipped release is affected: every `except` clause in 0.1.0 through 0.1.2
+uses the `except (A, B) as err:` form, which the tool leaves alone. The one
+affected construct was introduced in 0.1.3 and caught before release — by a
+manual `py_compile`, **not** by the lint gate that was supposed to catch it.
+
+`ruff check` has been this project's static-analysis gate since 0.1.0 and has
+now been demonstrated to pass a file that cannot be imported. A linter is not
+a syntax gate. Both now run, and the compile gate is a release blocker.
+
 ### 2.2 Tier 1 — pure logic (executed)
 
 ```
 $ python -m pytest tests/unit
-159 passed in 0.12s
+219 passed in 0.23s
 ```
 
 | File | Tests | Covers |
@@ -67,6 +90,7 @@ $ python -m pytest tests/unit
 | `test_identity_protection.py` | 27 | **E-003**, **E-009** |
 | `test_push_event_policy.py` | 26 | **E-010**, **E-011**, **F-001** |
 | `test_release_integrity.py` | 9 | **P0-1**, **P0-2**, shipped-artefact gate |
+| `test_telemetry.py` | 60 | **F-002**, plus **C-11** and **E-009** re-applied to entity states |
 
 These are executed on the authoring environment's Python 3.11 and in CI on
 3.11 / 3.12 / 3.13 / 3.14. That portability is deliberate: the arithmetic
@@ -200,10 +224,10 @@ was run locally.
 
 | Verification strength | Defects |
 | --- | --- |
-| **Executed test** | C-1, C-2, C-8, C-9 (partial), C-11 (partial), C-18 (partial), C-19, C-21, E-003, E-004 (tier 1 half), E-006, E-009, **E-010** (classification), **E-011**, **F-001** (default and keys) |
+| **Executed test** | C-1, C-2, C-8, C-9 (partial), C-11 (partial), C-18 (partial), C-19, C-21, E-003, E-004 (tier 1 half), E-006, E-009, **E-010** (classification), **E-011**, **F-001** (default and keys), **F-002** (recorder, classification, redaction, bounded memory, totality) |
 | **Static analysis** | P0-1, C-16, C-17 |
 | **Observed live** | **E-010** (reproduced from the operator's log and diagnostics) |
-| **Authored test, awaiting first CI run** | C-3, C-4, C-5, C-6, C-7, C-10, C-12, C-13, C-14, C-15, C-20, E-001, E-002, E-005, E-007, E-008, **E-010** (lifecycle half), **F-001** (lifecycle half) |
+| **Authored test, awaiting first CI run** | C-3, C-4, C-5, C-6, C-7, C-10, C-12, C-13, C-14, C-15, C-20, E-001, E-002, E-005, E-007, E-008, **E-010** (lifecycle half), **F-001** (lifecycle half), **F-002** (entity creation, availability during an outage, coordinator round trip) |
 | **Review and documentation only** | P0-3, P0-4, D-1 … D-9 |
 
 P0-2 moves out of "review only": its remediation was incomplete until 0.1.2
@@ -213,10 +237,23 @@ P0-2 moves out of "review only": its remediation was incomplete until 0.1.2
 
 ## 6. Release recommendation
 
-**Fit for release as 0.1.2**, with the residual risk in §4 accepted and
+**Fit for release as 0.1.3**, with the residual risk in §4 accepted and
 recorded.
 
-**What changed for 0.1.2.** The live soak is no longer a gap for the load and
+**What changed for 0.1.3.** A compile gate was added after `ruff check` was
+shown to pass a file that cannot be imported (§2.1a) — the third instance in
+this project of a check that did not check the thing that mattered. Tier 1
+grew from 159 to 219 tests, all of the new ones covering F-002.
+
+**What did not change.** Tier 2 is still unexecuted, and 0.1.3 adds a feature
+whose central requirement — that the telemetry sensors stay readable while the
+API fails — is reachable only from tier 2. There has also been **no live soak
+of 0.1.3**, so every failure path in the new feature has been exercised by
+fixtures only. Until the failure ratio has been seen going non-zero and back
+on real hardware, it is an untested indicator, and an untested indicator
+reading "healthy" is the same hazard as no indicator.
+
+**Carried from 0.1.2.** The live soak is no longer a gap for the load and
 polling path — it is executed evidence, and it is what found E-010. Tier 1
 grew from 124 to 159 tests and now covers the shipped translation artefact as
 well as the source it came from. What has not changed is §4.1: tier 2 remains

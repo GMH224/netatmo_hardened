@@ -1,6 +1,6 @@
 # Test Plan
 
-**Release:** 0.1.2
+**Release:** 0.1.3
 **Baseline:** Home Assistant 2026.9 · Python 3.14.2 · pyatmo 9.9.0
 
 ## 1. Strategy
@@ -53,6 +53,18 @@ testable, not a cosmetic refactor.
 | **E-011** | The shipped translation file is literal text, and matches the reviewed source | 1 | `test_shipped_translations_contain_no_unresolved_references`, `test_strings_and_translations_agree`, `test_user_facing_keys_have_text` (4 keys), `test_webhook_issue_text_carries_the_error_placeholder`, `test_push_events_option_step_is_translated` |
 | **F-001** | Push events default to off, load cleanly without a webhook, and register when enabled | 1 + 2 | `test_push_events_default_to_disabled`, `test_option_key_is_stable`, `test_repair_issue_key_is_stable` + `test_default_entry_registers_no_webhook`, `test_entry_still_loads_and_polls_without_push`, `test_opted_in_entry_registers_a_webhook`, `test_disabling_push_reloads_and_drops_the_webhook`, `test_disabling_push_clears_a_previous_rejection_issue` |
 | **F-001 / E-001** | The new reload path is reached by the push-event option only | 2 | `test_unrelated_option_change_does_not_reload` |
+| **F-002** | The 1 h failure window is computed over the right interval, at its boundary, and survives a backwards clock step | 1 | `test_samples_outside_the_window_are_dropped`, `test_a_sample_exactly_on_the_boundary_is_kept`, `test_recovery_moves_the_ratio_down_over_time`, `test_a_backwards_clock_step_does_not_wipe_the_history`, `test_ratio_is_failures_over_total` (5 cases) |
+| **F-002** | No evidence reports as unknown, never as 0% | 1 | `test_no_samples_is_unknown_not_zero` |
+| **F-002** | Telemetry memory is bounded by construction | 1 | `test_sample_buffer_is_bounded`, `test_window_and_cap_are_independent` |
+| **F-002** | Error classification is a closed vocabulary, total over any input | 1 | `test_statuses_classify` (11 codes), `test_unusable_status_is_unknown_not_a_crash` (8 inputs), `test_boolean_status_is_not_silently_an_http_code`, `test_every_classification_is_a_declared_option` |
+| **F-002** | Recording can never raise into the poll path | 1 + 2 | `test_recording_a_failure_never_raises` (5 cases), `test_recording_a_success_never_raises` + `test_a_broken_recorder_cannot_break_the_poll` |
+| **F-002 / C-11** | No webhook id can reach a telemetry state | 1 + 2 | `test_webhook_id_is_never_published_as_a_state`, `test_multiple_webhook_urls_are_all_redacted` + `test_webhook_id_never_reaches_a_telemetry_state` |
+| **F-002 / E-009** | No control or invisible character can reach a telemetry state | 1 | `test_control_characters_are_stripped`, `test_invisible_format_characters_are_stripped` |
+| **F-002** | No telemetry state can exceed Home Assistant's 255-character limit | 1 + 2 | `test_message_is_truncated_below_the_state_limit` + `test_no_telemetry_state_exceeds_the_state_length_limit` |
+| **F-002** | **Telemetry sensors stay available while the API fails** | 2 | `test_telemetry_stays_available_while_the_api_fails`, `test_failure_ratio_reports_an_ongoing_outage` |
+| **F-002** | The classification survives the round trip through the real fetch path | 2 | `test_error_type_is_classified_from_the_real_exception` (4 cases), `test_transport_errors_are_classified_as_network` |
+| **F-002** | A recovered fault stays visible | 1 + 2 | `test_a_success_does_not_erase_the_last_error` + `test_last_error_survives_a_subsequent_success` |
+| **Toolchain** | Every shipped `.py` file parses on a supported interpreter | Static | explicit compile gate over all files — `ruff check` alone was shown insufficient (`AUDIT_0.1.3.md` §5) |
 
 ## 3. Adversarial payload corpus
 
@@ -88,6 +100,8 @@ external audit's NET-031 through NET-033, which were reclassified from
 | Full HTTP status matrix (400/409/502/503/504, TLS, DNS) | Partially covered (401/403/429/500); webhook-registration classification now covers 400/401/403/404/408/409/425/429/500/502/503/504 at tier 1 |
 | Push-event path with a real public HTTPS endpoint | Not covered — the soak environment has none, so F-001's enabled branch is CI-only |
 | Non-English translation files | Not covered — only `en.json` ships. A future locale must expand its own references (E-011) |
+| A failure ratio observed going non-zero and back on real hardware | **Not covered.** Every F-002 failure path is exercised by fixtures only; the operator's environment has been healthy throughout. An untested indicator reading "healthy" is the same hazard as no indicator |
+| A latency baseline for a real Netatmo poll | Not covered — no measurement exists, so there is no basis yet for a threshold an operator could alert on |
 | Live cooling-mode payloads from real hardware | Not covered — C-14 built on the pyatmo data model |
 
 ## 5. Entry and exit criteria

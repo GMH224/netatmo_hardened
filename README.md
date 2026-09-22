@@ -15,7 +15,7 @@ fallback**: if this fork ever breaks on an upgrade, disable it and the built-in
 integration takes over. A fork that shadows the core domain masks it, so a
 breakage takes Netatmo out entirely.
 
-**Version 0.1.2** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
+**Version 0.1.3** · Home Assistant **2026.9+** · Python **3.14.2+** · pyatmo **9.9.0**
 
 ---
 
@@ -46,6 +46,31 @@ fixed were not:
 All of the above are fixed. See [`CHANGELOG.md`](CHANGELOG.md) for the complete
 list and [`docs/DEFECT_REGISTER.md`](docs/DEFECT_REGISTER.md) for each defect
 traced to its fix and test.
+
+### API telemetry (0.1.3)
+
+Six diagnostic sensors under a **Netatmo API** device answer the question the
+integration could not: not *whether* it is healthy — every entity's
+availability already told you that — but **how** healthy, and **when it last
+was not**.
+
+| Sensor | |
+| --- | --- |
+| API failure ratio (1h) | Percentage of calls in the last hour that failed |
+| API last error | The message, redacted and truncated |
+| API last error type | `auth`, `rate_limit`, `throttling`, `timeout`, `transport`, `server`, `client`, `no_device`, `unknown` |
+| API last error time | When it happened |
+| API last success | When the API last worked |
+| API poll latency | How long the last call took |
+
+A gap in a history graph looks identical whether it came from a Netatmo
+outage, your own network, or a rate limit. These tell them apart.
+
+**They stay available when the API is down** — deliberately, and unlike every
+other entity here. A diagnostic sensor that went unavailable during a fault
+would report nothing at the only moment you read it. Failure ratio is
+*unknown* rather than `0` before the first poll, because an integration that
+has made no calls has not achieved a 0% failure rate.
 
 ### Push events are off by default (0.1.2)
 
@@ -134,6 +159,8 @@ automations:
 | Document | Contents |
 | --- | --- |
 | [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release and why |
+| [`docs/RELEASE_0.1.3.md`](docs/RELEASE_0.1.3.md) | Release record, 0.1.3 |
+| [`docs/AUDIT_0.1.3.md`](docs/AUDIT_0.1.3.md) | Feature-addition review of 0.1.3 |
 | [`docs/RELEASE_0.1.2.md`](docs/RELEASE_0.1.2.md) | Release record, 0.1.2 — **read §5 before upgrading** |
 | [`docs/AUDIT_0.1.2.md`](docs/AUDIT_0.1.2.md) | Live soak and review of 0.1.1 |
 | [`docs/RELEASE_0.1.1.md`](docs/RELEASE_0.1.1.md) | Release record, 0.1.1 |
@@ -162,6 +189,9 @@ pytest tests/integration -v
 # Static analysis
 ruff check custom_components tests
 ruff format --check custom_components tests
+
+# Compile gate - ruff check is NOT a syntax gate; see docs/AUDIT_0.1.3.md
+python -c "import pathlib;[compile(f.read_text(),str(f),'exec') for f in pathlib.Path('.').rglob('*.py') if '__pycache__' not in str(f)]"
 ```
 
 The test suite is split deliberately. Tier 1 covers the logic where a silent
@@ -183,8 +213,11 @@ Stated plainly rather than omitted:
 - A live soak against a real Netatmo account **was** performed for 0.1.2, on a
   weather station only. It found E-010. Cameras, thermostats and presence
   devices remain unexercised against real hardware, as does push delivery.
-- 0.1.2 has **not** been independently audited. 0.1.1 was, and that audit found
-  four regressions this project had introduced.
+- Neither 0.1.2 nor 0.1.3 has been independently audited. 0.1.1 was, and that
+  audit found four regressions this project had introduced.
+- 0.1.3's telemetry has **never been soaked**: the failure ratio has not been
+  observed going non-zero and back on real hardware, and there is no latency
+  baseline for a real deployment. Watch those sensors before believing them.
 - No automated diff against the upstream core integration; drift review is
   manual.
 - No brand icon: HA brand images are keyed by domain and the central brands

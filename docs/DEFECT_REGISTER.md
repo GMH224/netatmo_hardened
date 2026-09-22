@@ -1,6 +1,6 @@
 # Defect Register and Traceability Matrix
 
-**Release:** 0.1.2 (cumulative — covers 0.1.0, 0.1.1 and 0.1.2)
+**Release:** 0.1.3 (cumulative — covers 0.1.0 through 0.1.3)
 **Date:** 2026-09-22
 **Baseline:** Home Assistant 2026.9, pyatmo 9.9.0, Python 3.14.2
 
@@ -122,6 +122,38 @@ failure, 0.1.1 corrected that by never giving up, and neither distinguished
 | ID | Change | Rationale | Operator impact | Verified by |
 | --- | --- | --- | --- | --- |
 | F-001 | Push events (the Netatmo webhook) are now an explicit option, `enable_webhook`, **disabled by default**. New options menu: *Push events* / *Public weather areas*. | Netatmo registers a webhook only against a publicly reachable HTTPS endpoint on port 443. The integration cannot detect whether the deployment has one; the operator can. Defaulting to off means an installation that cannot use push never asks for it — which is also the structural fix for E-010's *cause*, where E-010's own fix addresses its symptom. | **Push is off after upgrading**, including for Home Assistant Cloud subscribers who had working push on 0.1.1. Polling is unaffected; all data still arrives. Operators who want push must turn it on once — see `MIGRATION.md` §0.1.2. | `test_push_events_default_to_disabled`, `test_option_key_is_stable` (tier 1); `test_default_entry_registers_no_webhook`, `test_entry_still_loads_and_polls_without_push`, `test_opted_in_entry_registers_a_webhook`, `test_disabling_push_reloads_and_drops_the_webhook`, `test_unrelated_option_change_does_not_reload` (tier 2) |
+
+### F-002 — API telemetry (0.1.3)
+
+| ID | Change | Rationale | Operator impact | Verified by |
+| --- | --- | --- | --- | --- |
+| F-002 | Six diagnostic sensors on a new **Netatmo API** service device: failure ratio (1h), last error, last error type, last error time, last success, poll latency. | The integration knew *whether* it was healthy — every entity's availability depends on it — but not *how* healthy or *when it last was not*. A gap in a history graph looked the same whether caused by a Netatmo outage, a local network fault or a rate limit. The ICS argument: the distinction between "this reading is stale" and "this reading is wrong" is not visible from the reading. | Additive only. Six new diagnostic entities, enabled by default; no existing entity, option or control path changes. Failure ratio reads *unknown* until the first poll. | 60 tier-1 tests in `test_telemetry.py`; 13 tier-2 tests in `test_telemetry_sensors.py` |
+
+### Note on F-002 and availability
+
+The single design decision that matters is that these sensors **do not** go
+unavailable when the API fails. `NetatmoBaseEntity.available` ANDs the health
+of every subscribed publisher, which is correct for a temperature reading and
+useless for a diagnostic: a sensor that follows that rule reports nothing at
+the only moment an operator reads it.
+
+`NetatmoTelemetrySensor` leaves `_publishers` empty, so the inherited check
+reduces to `all([])` — `True`. Updates arrive on a dedicated dispatcher signal
+rather than through a publisher subscription, because a subscription carries
+availability with it and would have reintroduced the problem indirectly. Both
+properties are asserted by tests rather than left to the comments that explain
+them, because both look like oversights to anyone tidying the code later.
+
+### Note on F-002 and the C-11 secret-handling rule
+
+An entity state is a far more exposed channel than a debug log: it is readable
+by every dashboard, template, logbook entry and history export. A
+webhook-related API error is exactly the kind that quotes the callback URL,
+and that URL carries a bearer credential. `redact_error_message()` therefore
+applies the C-11 rule (no webhook id) and the E-009 rule (no control
+characters) before any message can reach a state, and truncates below Home
+Assistant's 255-character state limit — above which the state is dropped
+entirely, blanking the very sensor meant to report the fault.
 
 ### Note on F-001 and E-001
 

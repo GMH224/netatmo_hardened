@@ -149,6 +149,35 @@
           "sw": "Southwest",
           "w": "West"
         }
+      },
+      "api_failure_ratio_1h": {
+        "name": "API failure ratio (1h)"
+      },
+      "api_last_error": {
+        "name": "API last error"
+      },
+      "api_last_error_time": {
+        "name": "API last error time"
+      },
+      "api_last_success": {
+        "name": "API last success"
+      },
+      "api_poll_latency": {
+        "name": "API poll latency"
+      },
+      "api_last_error_type": {
+        "name": "API last error type",
+        "state": {
+          "auth": "Authorisation",
+          "rate_limit": "Rate limited",
+          "throttling": "Throttled",
+          "timeout": "Timeout",
+          "transport": "Network",
+          "server": "Netatmo server error",
+          "client": "Request rejected",
+          "no_device": "No device",
+          "unknown": "Unknown"
+        }
       }
     }
   },

@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import islice
-from time import time
+from time import monotonic, time
 from typing import Any
 
 import aiohttp
@@ -69,6 +69,16 @@ from .device import (
     async_register_parent_devices,
     async_sync_home_disabled_state,
     netatmo_module_parents,
+)
+from .telemetry import (
+    ERROR_AUTH,
+    ERROR_NO_DEVICE,
+    ERROR_THROTTLING,
+    ERROR_TIMEOUT,
+    ERROR_TRANSPORT,
+    ERROR_UNKNOWN,
+    ApiTelemetry,
+    classify_status,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -250,6 +260,11 @@ class NetatmoDataHandler:
         self.webhook_expected: bool = bool(
             config_entry.options.get(CONF_ENABLE_WEBHOOK, DEFAULT_ENABLE_WEBHOOK)
         )
+        # [hardened-fork] API telemetry (F-002). Deliberately not persisted:
+        # the failure ratio describes the running system, and restoring an
+        # hour-old window across a restart would report a fault that the
+        # restart itself may have resolved.
+        self.telemetry = ApiTelemetry()
 
     @property
     def _watchdog_reloads(self) -> int:
@@ -468,6 +483,13 @@ class NetatmoDataHandler:
         publisher = self.publisher[signal_name]
         was_available = publisher.available
         has_error = False
+        # [hardened-fork] F-002. Two clocks on purpose: `monotonic` for the
+        # duration, because wall time can step during a slow call and produce
+        # a negative latency; `time` for the timestamps an operator reads,
+        # because a monotonic reading means nothing on a dashboard.
+        started = monotonic()
+        error_type: str | None = None
+        error_message: Any = None
         try:
             await getattr(self.account, publisher.method)(**publisher.kwargs)
 
@@ -478,6 +500,8 @@ class NetatmoDataHandler:
             # must start a reauth flow, never be retried silently as though it
             # were a network blip (defect C-7).
             has_error = True
+            error_type = ERROR_AUTH
+            error_message = "Authentication failed; reauthentication required"
             self._async_start_reauth()
 
         except pyatmo.ApiError as err:
@@ -487,7 +511,16 @@ class NetatmoDataHandler:
             # told apart from a rate limit or a server fault and routed to the
             # recovery that actually applies (defect C-7).
             has_error = True
+            error_message = err
+            # Throttling is checked before the status, because Netatmo answers
+            # 403 when rate limiting and `classify_status` would call that an
+            # authorization failure - the same ambiguity E-010 had to handle.
+            if isinstance(err, (pyatmo.ApiThrottlingError, ApiTooManyRequestError)):
+                error_type = ERROR_THROTTLING
+            else:
+                error_type = classify_status(getattr(err, "status", None))
             if _is_auth_failure(err):
+                error_type = ERROR_AUTH
                 self._async_start_reauth()
                 _LOGGER.warning(
                     "Netatmo rejected our authorization while fetching %s "
@@ -505,12 +538,30 @@ class NetatmoDataHandler:
             aiohttp.ClientError,
         ) as err:
             has_error = True
+            error_message = err
+            if isinstance(err, pyatmo.NoDeviceError):
+                error_type = ERROR_NO_DEVICE
+            elif isinstance(err, TimeoutError):
+                error_type = ERROR_TIMEOUT
+            else:
+                error_type = ERROR_TRANSPORT
             self._log_publisher_error(publisher, signal_name, err)
         else:
             if publisher.unavailable_logged:
                 _LOGGER.info("Fetching %s data recovered", signal_name)
                 publisher.unavailable_logged = False
             self.async_note_recovery()
+
+        # [hardened-fork] F-002. Recording is wrapped because telemetry must
+        # never be able to break the thing it measures: an exception raised
+        # here would propagate out of the update loop and take the publisher
+        # cycle down with it, turning a monitoring feature into an outage.
+        try:
+            self._record_telemetry(
+                has_error, monotonic() - started, error_type, error_message
+            )
+        except Exception:  # see above; telemetry is never allowed to be fatal
+            _LOGGER.exception("Failed to record Netatmo API telemetry")
 
         if has_error:
             publisher.error_count += 1
@@ -532,6 +583,39 @@ class NetatmoDataHandler:
 
         self._notify_subscribers(signal_name)
         return has_error
+
+    def _record_telemetry(
+        self,
+        has_error: bool,
+        latency_seconds: float,
+        error_type: str | None,
+        error_message: Any,
+    ) -> None:
+        """Record one API outcome and tell the telemetry sensors to refresh.
+
+        [hardened-fork] F-002.
+
+        The refresh is dispatched on its own signal rather than through the
+        publisher subscriptions every other entity uses. Publisher
+        subscriptions carry availability with them - an entity bound to a
+        failing publisher goes unavailable - and a diagnostic sensor that goes
+        unavailable exactly when the API starts failing reports nothing at the
+        only moment anybody reads it.
+        """
+        now = time()
+        if has_error:
+            self.telemetry.record_failure(
+                now,
+                error_type or ERROR_UNKNOWN,
+                error_message,
+                latency_seconds,
+            )
+        else:
+            self.telemetry.record_success(now, latency_seconds)
+
+        async_dispatcher_send(
+            self.hass, f"signal-{DOMAIN}-telemetry-{self.config_entry.entry_id}"
+        )
 
     def _log_publisher_error(
         self, publisher: NetatmoPublisher, signal_name: str, err: Exception

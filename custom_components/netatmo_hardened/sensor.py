@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
+from time import time
 from typing import Any, Final, cast, override
 
 import pyatmo
@@ -17,6 +19,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     DEGREE,
+    PERCENTAGE,
     EntityCategory,
     EntityStateAttribute,
     UnitOfPower,
@@ -26,6 +29,7 @@ from homeassistant.const import (
     UnitOfSoundPressure,
     UnitOfSpeed,
     UnitOfTemperature,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
@@ -36,6 +40,7 @@ from homeassistant.helpers.dispatcher import (
 )
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.util import dt as dt_util
 from pyatmo.modules import PublicWeatherArea
 from pyatmo.modules.device_types import DeviceCategory as NetatmoDeviceCategory
 
@@ -44,8 +49,10 @@ from .const import (
     CONF_URL_ENERGY,
     CONF_URL_PUBLIC_WEATHER,
     CONF_URL_SECURITY,
+    CONF_URL_WEATHER,
     CONF_WEATHER_AREAS,
     DOMAIN,
+    MANUFACTURER,
     NETATMO_CREATE_CLIMATE_BATTERY_SENSOR,
     NETATMO_CREATE_LEGACY_SENSOR,
     NETATMO_CREATE_ROOM_SENSOR,
@@ -70,6 +77,11 @@ from .entity import (
     room_device_info,
 )
 from .helper import NetatmoArea
+from .telemetry import (
+    ERROR_TYPES,
+    FAILURE_RATIO_WINDOW_SECONDS,
+    TelemetrySnapshot,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -633,6 +645,16 @@ async def async_setup_entry(
 
     await add_public_entities(False)
 
+    # [hardened-fork] F-002. Added unconditionally and synchronously: these
+    # describe the API connection itself, so they must exist even on an
+    # account with no devices, and they must be present *before* the first
+    # poll rather than created in response to one - an integration whose very
+    # first call fails should still report that failure.
+    async_add_entities(
+        NetatmoTelemetrySensor(data_handler, description)
+        for description in TELEMETRY_SENSORS
+    )
+
 
 class NetatmoLegacyReachableSensor(NetatmoDeviceEntity, SensorEntity):
     """Sensor mixin that goes unavailable, keeping its last value, when unreachable."""
@@ -1071,4 +1093,175 @@ class NetatmoPublicSensor(NetatmoBaseEntity, SensorEntity):
                 self._attr_native_value = min(values)
 
         self._attr_available = self.native_value is not None
+        self.async_write_ha_state()
+
+
+# ---------------------------------------------------------------------------
+# API telemetry (feature F-002, 0.1.3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True)
+class NetatmoTelemetrySensorEntityDescription(SensorEntityDescription):
+    """Describes a Netatmo API telemetry sensor.
+
+    [hardened-fork] ``value_fn`` reads a ``TelemetrySnapshot`` rather than the
+    live recorder, so the six sensors produced by one update cycle cannot
+    disagree with one another.
+    """
+
+    value_fn: Callable[[TelemetrySnapshot], StateType | datetime]
+
+
+def _timestamp(value: float | None) -> datetime | None:
+    """Return a timezone-aware datetime, or None.
+
+    Home Assistant requires an aware datetime for ``SensorDeviceClass.TIMESTAMP``
+    and will reject a naive one. The recorder stores plain epoch seconds
+    because it has no Home Assistant imports, so the conversion happens here.
+    """
+    if value is None:
+        return None
+    return dt_util.utc_from_timestamp(value)
+
+
+TELEMETRY_SENSORS: Final[tuple[NetatmoTelemetrySensorEntityDescription, ...]] = (
+    NetatmoTelemetrySensorEntityDescription(
+        key="api_failure_ratio_1h",
+        translation_key="api_failure_ratio_1h",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        suggested_display_precision=1,
+        # None (not 0) until there is evidence: an integration that has made
+        # no calls has not achieved a 0% failure rate.
+        value_fn=lambda snapshot: (
+            None
+            if snapshot.failure_ratio is None
+            else round(snapshot.failure_ratio * 100, 2)
+        ),
+    ),
+    NetatmoTelemetrySensorEntityDescription(
+        key="api_last_error",
+        translation_key="api_last_error",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.last_error,
+    ),
+    NetatmoTelemetrySensorEntityDescription(
+        key="api_last_error_type",
+        translation_key="api_last_error_type",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(ERROR_TYPES),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: snapshot.last_error_type,
+    ),
+    NetatmoTelemetrySensorEntityDescription(
+        key="api_last_error_time",
+        translation_key="api_last_error_time",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: _timestamp(snapshot.last_error_timestamp),
+    ),
+    NetatmoTelemetrySensorEntityDescription(
+        key="api_last_success",
+        translation_key="api_last_success",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snapshot: _timestamp(snapshot.last_success_timestamp),
+    ),
+    NetatmoTelemetrySensorEntityDescription(
+        key="api_poll_latency",
+        translation_key="api_poll_latency",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MILLISECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        suggested_display_precision=0,
+        value_fn=lambda snapshot: (
+            None
+            if snapshot.latency_seconds is None
+            else round(snapshot.latency_seconds * 1000, 1)
+        ),
+    ),
+)
+
+
+class NetatmoTelemetrySensor(NetatmoBaseEntity, SensorEntity):
+    """A diagnostic sensor reporting the health of the Netatmo API itself.
+
+    [hardened-fork] Feature F-002.
+
+    Two properties of this class matter more than what it measures.
+
+    **It never goes unavailable.** ``_publishers`` is left empty, so the
+    inherited availability check - which ANDs the health of every subscribed
+    publisher - reduces to ``all([])``, which is ``True``. That is deliberate,
+    not an oversight: every other entity in this integration is unavailable
+    precisely when the API is failing, and a diagnostic sensor that follows
+    the same rule would report nothing at the only moment an operator looks
+    at it. The whole point is to be readable during an outage.
+
+    **It is not driven by publisher subscriptions.** Updates arrive on a
+    dedicated dispatcher signal from the coordinator. Subscribing to a
+    publisher would have coupled these sensors to that publisher's
+    availability and reintroduced the problem above through the back door.
+    """
+
+    entity_description: NetatmoTelemetrySensorEntityDescription
+    _attr_should_poll = False
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(
+        self,
+        data_handler: NetatmoDataHandler,
+        description: NetatmoTelemetrySensorEntityDescription,
+    ) -> None:
+        """Initialize the telemetry sensor."""
+        super().__init__(data_handler)
+        self.entity_description = description
+
+        entry_id = data_handler.config_entry.entry_id
+        self._attr_unique_id = f"{entry_id}-{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry_id}-api")},
+            manufacturer=MANUFACTURER,
+            name="Netatmo API",
+            # A service device rather than a physical one: this represents the
+            # cloud endpoint, which has no firmware, serial or hardware model
+            # to report. Claiming otherwise would put fictional hardware in
+            # the device registry.
+            entry_type=dr.DeviceEntryType.SERVICE,
+            configuration_url=CONF_URL_WEATHER,
+        )
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to telemetry updates."""
+        await super().async_added_to_hass()
+
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"signal-{DOMAIN}-telemetry-{self.data_handler.config_entry.entry_id}",
+                self.async_update_callback,
+            )
+        )
+
+    @callback
+    @override
+    def async_update_callback(self) -> None:
+        """Publish the current telemetry value."""
+        snapshot = self.data_handler.telemetry.snapshot(time())
+        self._attr_native_value = self.entity_description.value_fn(snapshot)
+
+        if self.entity_description.key == "api_failure_ratio_1h":
+            # Without the sample count the ratio is not interpretable: 100%
+            # over two samples and 100% over two hundred are different claims.
+            self._attr_extra_state_attributes = {
+                "sample_count": snapshot.sample_count,
+                "window_seconds": FAILURE_RATIO_WINDOW_SECONDS,
+                "total_polls": snapshot.total_polls,
+                "total_failures": snapshot.total_failures,
+            }
+
         self.async_write_ha_state()

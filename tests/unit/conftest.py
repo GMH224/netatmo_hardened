@@ -78,6 +78,12 @@ def _literal_constants(path: Path) -> dict[str, object]:
 
 
 @pytest.fixture(scope="session")
+def telemetry() -> ModuleType:
+    """Return the component's API telemetry module."""
+    return _load("telemetry")
+
+
+@pytest.fixture(scope="session")
 def const() -> SimpleNamespace:
     """Return the component's literal constants as attributes."""
     return SimpleNamespace(**_literal_constants(COMPONENT_DIR / "const.py"))

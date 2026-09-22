@@ -4,6 +4,76 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-09-22
+
+Adds the API telemetry the operator asked for. Additive only — no existing
+entity, option or control path changes.
+
+Full analysis: [`docs/AUDIT_0.1.3.md`](docs/AUDIT_0.1.3.md).
+Release record: [`docs/RELEASE_0.1.3.md`](docs/RELEASE_0.1.3.md).
+
+### Added
+
+- **Six API telemetry sensors** (F-002), on a new **Netatmo API** service
+  device, all diagnostic and enabled by default:
+
+  | Sensor | Notes |
+  | --- | --- |
+  | API failure ratio (1h) | Percentage of API calls in the last hour that failed |
+  | API last error | The message, redacted and truncated |
+  | API last error type | `auth`, `rate_limit`, `throttling`, `timeout`, `transport`, `server`, `client`, `no_device`, `unknown` |
+  | API last error time | When it happened |
+  | API last success | When the API last worked |
+  | API poll latency | How long the last call took |
+
+  The integration already knew *whether* it was healthy — every entity's
+  availability depends on it. It could not say *how* healthy, or *when it last
+  was not*. A gap in a history graph looked identical whether it came from a
+  Netatmo outage, a local network fault or a rate limit.
+
+  Three behaviours are deliberate and worth knowing:
+
+  - **They stay available when the API is down.** Every other entity goes
+    unavailable exactly then. A diagnostic sensor that did the same would
+    report nothing at the only moment anyone reads it.
+  - **Failure ratio is *unknown*, not 0%, before the first poll.** An
+    integration that has made no calls has not achieved a 0% failure rate, and
+    "healthy" is the more dangerous of the two possible wrong answers.
+    `sample_count` is published as an attribute, because 100% over two samples
+    and over two hundred are different claims.
+  - **The last error is not cleared by the next success.** You asked for the
+    last error, not the current one — it is read the morning after, not
+    during.
+
+  Error messages are redacted before they become states: an entity state is
+  readable by every dashboard, template and history export, and a
+  webhook-related API error quotes a URL carrying a bearer credential.
+
+### Fixed
+
+- Nothing in shipped code. Two defects were found **in this release's own new
+  code before it shipped** — a non-terminating loop in the redaction routine,
+  and a recorder that was not total despite its docstring saying so. Both are
+  written up in [`docs/AUDIT_0.1.3.md`](docs/AUDIT_0.1.3.md) §4 rather than
+  quietly corrected, because how they were caught is the useful part.
+
+### Changed — build process
+
+- **The release now compiles every `.py` file explicitly.** `ruff 0.15.11` in
+  this build environment rewrites `except (A, B):` into `except A, B:` —
+  invalid Python — and then reports the corrupted file as clean. No shipped
+  release is affected (every existing `except` uses the `as err` form, which
+  the tool leaves alone), but `ruff check` has been the static-analysis gate
+  since 0.1.0 and has now been shown to pass a file that cannot be imported.
+  A linter is not a syntax gate. See [`docs/AUDIT_0.1.3.md`](docs/AUDIT_0.1.3.md) §5.
+
+### Testing
+
+- 60 new tier-1 tests and 13 new tier-2 tests (219 tier-1 total, up from 159).
+- Tier 2 remains **unexecuted** in the authoring environment for the reason
+  recorded since 0.1.0. The feature's central requirement — availability
+  during an outage — is a tier-2 property, so it is written and unrun.
+
 ## [0.1.2] - 2026-09-22
 
 Found by running 0.1.1 in a real Home Assistant, exactly as
@@ -356,6 +426,7 @@ documented with reasoning in `docs/DEFECT_REGISTER.md` §4:
 - pyatmo held at 9.9.0; 9.9.1 exists and is a 0.2.0 task.
 - pyatmo 9.9.0's own webhook parser is not yet adopted; planned for 0.2.0.
 
+[0.1.3]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.3
 [0.1.2]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.2
 [0.1.1]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ngen-advisory/netatmo-hardened/releases/tag/v0.1.0

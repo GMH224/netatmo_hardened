@@ -1,6 +1,6 @@
 # Commissioning and Soak Checklist
 
-**Applies to:** 0.1.2 · test or staging installation
+**Applies to:** 0.1.3 · test or staging installation
 **Purpose:** establish, by observation on a live system, the behaviour that
 neither static analysis nor the tier-1 test suite can establish.
 
@@ -130,6 +130,35 @@ password (guards C-11).
 
 ---
 
+### 1.7 API telemetry reads sensibly (0.1.3)
+
+Six new diagnostic sensors appear under a **Netatmo API** device. They are the
+first thing to check on any later fault, so confirm now that they are telling
+the truth while everything is known-good.
+
+| Sensor | Expected a few minutes after start | A wrong value here means |
+| --- | --- | --- |
+| API last success | a timestamp within the last poll interval | the integration is not polling |
+| API failure ratio (1h) | `0` on a healthy account — **`unknown` before the first poll is correct** | a non-zero value on a healthy account needs explaining before you trust the rest |
+| API poll latency | a plausible duration, typically well under a second | a value of zero, or one that never changes, means it is not being measured |
+| API last error / type / time | `unknown` on a clean start, **or** a real past error that has since recovered | — |
+
+Check the **sample_count** attribute on the failure-ratio sensor. The ratio is
+not interpretable without it: 100% over two samples and 100% over two hundred
+are different claims, and only one of them is an outage.
+
+> **These sensors must stay available when the API is failing.** That is what
+> they are for, and it is the opposite of how every other entity in this
+> integration behaves. If you ever see them go *unavailable* during a fault,
+> that is a defect — report it, because it defeats the entire feature.
+
+Record the latency you see here. There is no published baseline for what a
+normal Netatmo poll costs from a given deployment, so your own healthy figure
+is the only reference you will have when deciding whether a later reading is
+abnormal.
+
+---
+
 ## 2. First six hours — the reload check
 
 **This is the single most important observation in the list.**
@@ -251,11 +280,13 @@ Deploy to an unattended installation only when **all** of the following hold:
 - [ ] If push is on: no *"Netatmo push events could not be enabled"* repair
       issue outstanding, and no registration retry still looping after an hour
 - [ ] §2 clear after a minimum of six hours
+- [ ] §1.7 telemetry sensors read sensibly, and a healthy-state latency
+      baseline has been recorded
 - [ ] §3 complete for every device class you actually own
 - [ ] §4 clear after seven days
 - [ ] Results recorded, with dates
 
-Until then 0.1.2 is a **test-environment release**, whatever its version number
+Until then 0.1.3 is a **test-environment release**, whatever its version number
 says.
 
 ---
