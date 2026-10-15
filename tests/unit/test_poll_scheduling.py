@@ -143,7 +143,7 @@ def test_result_is_always_a_whole_number_of_seconds(helper):
 
 def test_a_home_with_modules_is_polled(helper):
     """The ordinary case must be unaffected."""
-    assert helper.home_is_pollable(["70:ee:50:13:44:da"], ["room-1"], set()) is True
+    assert helper.home_is_pollable(["70:ee:50:00:00:10"], ["room-1"], set()) is True
 
 
 def test_a_home_with_no_modules_is_not_polled(helper):
@@ -217,8 +217,8 @@ def test_accepts_dict_views_as_well_as_lists(helper):
     attribute actually is rather than on a list the caller remembered to
     build.
     """
-    modules = {"70:ee:50:13:44:da": object()}
-    rooms = {"2757209110": object()}
+    modules = {"70:ee:50:00:00:10": object()}
+    rooms = {"1000000002": object()}
     assert helper.home_is_pollable(modules, rooms, set()) is True
 
 
@@ -230,12 +230,12 @@ def test_the_operators_own_account_shape(helper):
     traffic fetched homes that were empty.
     """
     equipped = helper.home_is_pollable(
-        ["70:ee:50:13:44:da", "03:00:00:0a:e4:94", "03:00:00:0b:15:b4"],
-        ["1901977365", "2757209110", "1431568190", "3142077297", "1495207751"],
+        ["70:ee:50:00:00:10", "03:00:00:00:00:11", "03:00:00:00:00:12"],
+        ["1000000001", "1000000002", "1000000003", "1000000004", "1000000005"],
         set(),
     )
-    empty_one = helper.home_is_pollable([], ["2058227814", "2088457813"], set())
-    empty_two = helper.home_is_pollable([], ["1766520607"], set())
+    empty_one = helper.home_is_pollable([], ["1000000006", "1000000007"], set())
+    empty_two = helper.home_is_pollable([], ["1000000008"], set())
 
     assert equipped is True
     assert empty_one is False

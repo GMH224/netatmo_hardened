@@ -34,9 +34,9 @@ from custom_components.netatmo_hardened.coordinator import (
     WEATHER,
 )
 
-EQUIPPED_HOME = "5ef37f972f57748b18076045"
-EMPTY_HOME_A = "64eaac5587b343b64307bbb8"
-EMPTY_HOME_B = "69c4b00babf413b12700ac25"
+EQUIPPED_HOME = "000000000000000000000001"
+EMPTY_HOME_A = "000000000000000000000002"
+EMPTY_HOME_B = "000000000000000000000003"
 
 
 def _home(home_id: str, modules: dict, rooms: dict) -> MagicMock:
@@ -157,11 +157,11 @@ async def test_a_home_with_no_modules_gets_no_publisher(
     mock_account.homes = {
         EQUIPPED_HOME: _home(
             EQUIPPED_HOME,
-            {"70:ee:50:13:44:da": MagicMock(), "03:00:00:0a:e4:94": MagicMock()},
-            {"2757209110": MagicMock()},
+            {"70:ee:50:00:00:10": MagicMock(), "03:00:00:00:00:11": MagicMock()},
+            {"1000000002": MagicMock()},
         ),
-        EMPTY_HOME_A: _home(EMPTY_HOME_A, {}, {"2058227814": MagicMock()}),
-        EMPTY_HOME_B: _home(EMPTY_HOME_B, {}, {"1766520607": MagicMock()}),
+        EMPTY_HOME_A: _home(EMPTY_HOME_A, {}, {"1000000006": MagicMock()}),
+        EMPTY_HOME_B: _home(EMPTY_HOME_B, {}, {"1000000008": MagicMock()}),
     }
 
     await _setup(hass, push_disabled_config_entry)
@@ -182,7 +182,7 @@ async def test_skipping_empty_homes_does_not_break_setup(
     must still load cleanly.
     """
     mock_account.homes = {
-        EMPTY_HOME_A: _home(EMPTY_HOME_A, {}, {"2058227814": MagicMock()}),
+        EMPTY_HOME_A: _home(EMPTY_HOME_A, {}, {"1000000006": MagicMock()}),
         EMPTY_HOME_B: _home(EMPTY_HOME_B, {}, {}),
     }
 
@@ -198,8 +198,8 @@ async def test_an_equipped_home_is_still_polled(
     mock_account.homes = {
         EQUIPPED_HOME: _home(
             EQUIPPED_HOME,
-            {"70:ee:50:13:44:da": MagicMock()},
-            {"2757209110": MagicMock()},
+            {"70:ee:50:00:00:10": MagicMock()},
+            {"1000000002": MagicMock()},
         ),
     }
 
